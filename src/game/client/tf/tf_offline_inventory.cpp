@@ -36,6 +36,8 @@
 #include "cbase.h"
 #include "tf_offline_inventory.h"
 #include "tf_offline_inventory_shared.h"
+#include "tf_offline_crates.h"
+#include "tool_items/decoder_ring_tool.h"
 #include "tf_item_inventory.h"
 #include "tf_item_system.h"
 #include "tf_gc_client.h"
@@ -68,6 +70,8 @@ CTFOfflineInventory &TFOfflineInventory()
 //-----------------------------------------------------------------------------
 // Helpers
 //-----------------------------------------------------------------------------
+static const char *GetQualityDisplayName( int nQuality );
+
 static itemid_t ItemIDFromKV( KeyValues *pItemKV )
 {
 	return V_atoui64( pItemKV->GetName() );
@@ -152,6 +156,7 @@ void CTFOfflineInventory::Think()
 		return;
 	}
 
+	ApplyPendingUnlocks();
 	ApplyPendingMoves();
 
 	if ( m_bDirty )
@@ -408,9 +413,14 @@ bool CTFOfflineInventory::BuildEconItem( KeyValues *pItemKV, CEconItem *pItem ) 
 	pItem->SetOrigin( (eEconItemOrigin)pItemKV->GetInt( "origin", kEconItemOrigin_Drop ) );
 	pItem->SetFlags( 0 );
 	pItem->SetStyle( pItemKV->GetInt( "style", 0 ) );
+	int nNewReason = pItemKV->GetInt( "new_reason", UNACK_ITEM_DROPPED );
+	if ( nNewReason <= UNACK_ITEM_UNKNOWN || nNewReason >= UNACK_NUM_METHODS )
+	{
+		nNewReason = UNACK_ITEM_DROPPED;
+	}
 	pItem->SetInventoryToken( iSlot > 0
 		? ( kBackendPosition_NewFormat | (uint32)iSlot )
-		: GetUnacknowledgedPositionFor( UNACK_ITEM_DROPPED ) );
+		: GetUnacknowledgedPositionFor( (unacknowledged_item_inventory_positions_t)nNewReason ) );
 
 	const char *pszCustomName = pItemKV->GetString( "custom_name", "" );
 	if ( pszCustomName[0] )
@@ -512,14 +522,26 @@ void CTFOfflineInventory::NotifyEquipmentChanged()
 //-----------------------------------------------------------------------------
 itemid_t CTFOfflineInventory::GiveItem( const CEconItemDefinition *pItemDef, int nQuality )
 {
+	return CreateItem( pItemDef, nQuality, NULL, kEconItemOrigin_Drop, 0 );
+}
+
+//-----------------------------------------------------------------------------
+itemid_t CTFOfflineInventory::CreateItem( const CEconItemDefinition *pItemDef, int nQuality, KeyValues *pAttributes,
+										  eEconItemOrigin eOrigin, int nUnacknowledgedReason )
+{
 	if ( !m_bLoaded || !pItemDef )
 		return INVALID_ITEM_ID;
 
-	const int iSlot = FindFreeBackpackSlot();
-	if ( !iSlot )
+	// New items wait in slot 0 until the game shows them to you and places them.
+	int iSlot = 0;
+	if ( nUnacknowledgedReason == 0 )
 	{
-		Warning( "Offline inventory: the backpack is full (%d slots).\n", kOfflineBackpackSlots );
-		return INVALID_ITEM_ID;
+		iSlot = FindFreeBackpackSlot();
+		if ( !iSlot )
+		{
+			Warning( "Offline inventory: the backpack is full (%d slots).\n", kOfflineBackpackSlots );
+			return INVALID_ITEM_ID;
+		}
 	}
 
 	// Default to the quality the item normally comes in, and Unique if that's Normal or unset.
@@ -550,16 +572,28 @@ itemid_t CTFOfflineInventory::GiveItem( const CEconItemDefinition *pItemDef, int
 	pItemKV->SetString( "name", pItemDef->GetDefinitionName() );
 	pItemKV->SetInt( "quality", nQuality );
 	pItemKV->SetInt( "level", RandomInt( MAX( nMinLevel, 1 ), nMaxLevel ) );
-	pItemKV->SetInt( "origin", kEconItemOrigin_Drop );
+	pItemKV->SetInt( "origin", eOrigin );
 	pItemKV->SetInt( "slot", iSlot );
+	if ( nUnacknowledgedReason != 0 )
+	{
+		pItemKV->SetInt( "new_reason", nUnacknowledgedReason );
+	}
+
+	if ( pAttributes )
+	{
+		KeyValues *pAttributesCopy = pAttributes->MakeCopy();
+		pAttributesCopy->SetName( "attributes" );
+		pItemKV->AddSubKey( pAttributesCopy );
+	}
 
 	// Strange items need a kill counter to show their rank.
 	if ( nQuality == AE_STRANGE )
 	{
 		const CEconItemAttributeDefinition *pKillEater = GetItemSchema()->GetAttributeDefinitionByName( "kill eater" );
-		if ( pKillEater && !::FindAttribute( pItemDef, pKillEater ) )
+		KeyValues *pAttributesKV = pItemKV->FindKey( "attributes", true );
+		if ( pKillEater && !::FindAttribute( pItemDef, pKillEater ) && !pAttributesKV->FindKey( pKillEater->GetDefinitionName() ) )
 		{
-			pItemKV->FindKey( "attributes", true )->SetString( pKillEater->GetDefinitionName(), "0" );
+			pAttributesKV->SetString( pKillEater->GetDefinitionName(), "0" );
 		}
 	}
 
@@ -678,6 +712,14 @@ bool CTFOfflineInventory::ApplyItemPosition( itemid_t unItemID, uint32 unBackend
 	m_nSlotUseCount[iNewSlot]++;
 	pItemKV->SetInt( "slot", iNewSlot );
 
+	// Once placed, it isn't a new item any more.
+	KeyValues *pNewReasonKV = iNewSlot > 0 ? pItemKV->FindKey( "new_reason" ) : NULL;
+	if ( pNewReasonKV )
+	{
+		pItemKV->RemoveSubKey( pNewReasonKV );
+		pNewReasonKV->deleteThis();
+	}
+
 	UpdateLiveItem( pItemKV );
 	m_bDirty = true;
 	return true;
@@ -759,6 +801,157 @@ int CTFOfflineInventory::DeleteAllItems()
 }
 
 //-----------------------------------------------------------------------------
+// Crates
+//-----------------------------------------------------------------------------
+void CTFOfflineInventory::RequestUnlockCrate( itemid_t unKeyID, itemid_t unCrateID )
+{
+	PendingUnlock_t &unlock = m_vecPendingUnlocks[ m_vecPendingUnlocks.AddToTail() ];
+	unlock.m_unKeyID = unKeyID;
+	unlock.m_unCrateID = unCrateID;
+}
+
+//-----------------------------------------------------------------------------
+void CTFOfflineInventory::ApplyPendingUnlocks()
+{
+	if ( m_vecPendingUnlocks.Count() == 0 )
+		return;
+
+	CUtlVector< PendingUnlock_t > vecUnlocks;
+	vecUnlocks.Swap( m_vecPendingUnlocks );
+
+	FOR_EACH_VEC( vecUnlocks, i )
+	{
+		if ( UnlockCrate( vecUnlocks[i].m_unKeyID, vecUnlocks[i].m_unCrateID ) )
+		{
+			PlayCrateUnlockSound();
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+static void GetUnusualEffectName( KeyValues *pAttributes, char *pszOut, int nOutSize )
+{
+	pszOut[0] = '\0';
+	if ( !pAttributes )
+		return;
+
+	KeyValues *pEffectKV = pAttributes->FindKey( "attach particle effect" );
+	if ( !pEffectKV )
+	{
+		pEffectKV = pAttributes->FindKey( "on taunt attach particle index" );
+	}
+	if ( !pEffectKV )
+		return;
+
+	const int iEffect = (int)V_atof( pEffectKV->GetString() );
+	const locchar_t *pszLocalized = GLocalizationProvider()->Find( CFmtStr( "#Attrib_Particle%d", iEffect ) );
+	if ( pszLocalized )
+	{
+		GLocalizationProvider()->ConvertLoccharToANSI( pszLocalized, pszOut, nOutSize );
+	}
+	else
+	{
+		V_snprintf( pszOut, nOutSize, "effect %d", iEffect );
+	}
+}
+
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::UnlockCrate( itemid_t unKeyID, itemid_t unCrateID )
+{
+	const CEconItem *pCrate = FindLiveItem( unCrateID );
+	if ( !pCrate || !FindItemKV( unCrateID ) )
+	{
+		Warning( "Offline inventory: crate %llu isn't in your backpack.\n", (unsigned long long)unCrateID );
+		return false;
+	}
+
+	if ( unKeyID != INVALID_ITEM_ID && !FindItemKV( unKeyID ) )
+	{
+		Warning( "Offline inventory: key %llu isn't in your backpack.\n", (unsigned long long)unKeyID );
+		return false;
+	}
+
+	CUtlVector< COfflineLootItem * > vecLoot;
+	if ( !OfflineCrates_RollCrate( pCrate, vecLoot ) )
+	{
+		vecLoot.PurgeAndDeleteElements();
+		Warning( "Offline inventory: this version of the game doesn't know what that crate contains, so it wasn't opened.\n" );
+		return false;
+	}
+
+	// The key and the crate are used up. (pCrate is gone after this.)
+	if ( unKeyID != INVALID_ITEM_ID )
+	{
+		DeleteItem( unKeyID );
+	}
+	DeleteItem( unCrateID );
+
+	// Arriving as new "found in crate" items is what makes the backpack play
+	// its unboxing reveal.
+	char szName[256], szEffect[256];
+	FOR_EACH_VEC( vecLoot, i )
+	{
+		const COfflineLootItem *pLoot = vecLoot[i];
+		const itemid_t unItemID = CreateItem( pLoot->m_pItemDef, pLoot->m_nQuality, pLoot->m_pAttributes,
+											  kEconItemOrigin_FoundInCrate, UNACK_ITEM_FOUND_IN_CRATE );
+		if ( unItemID == INVALID_ITEM_ID )
+			continue;
+
+		OfflineInventory_GetItemDefDisplayName( pLoot->m_pItemDef, szName, sizeof( szName ) );
+		GetUnusualEffectName( pLoot->m_pAttributes, szEffect, sizeof( szEffect ) );
+		Msg( "%s %s %s%s%s (item ID %llu)\n", i == 0 ? "Unboxed:" : "  Bonus:",
+			GetQualityDisplayName( pLoot->m_nQuality ), szName,
+			szEffect[0] ? ", " : "", szEffect, (unsigned long long)unItemID );
+	}
+
+	vecLoot.PurgeAndDeleteElements();
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::OpenCrateWithAnyKey( itemid_t unCrateID )
+{
+	KeyValues *pCrateKV = FindItemKV( unCrateID );
+	const CEconItemDefinition *pCrateDef = pCrateKV ? FindItemDefForKV( pCrateKV ) : NULL;
+	if ( !OfflineCrates_IsCrate( pCrateDef ) )
+	{
+		Msg( "Item %llu isn't a crate.\n", (unsigned long long)unCrateID );
+		return false;
+	}
+
+	itemid_t unKeyID = INVALID_ITEM_ID;
+	if ( OfflineCrates_NeedsKey( pCrateDef ) )
+	{
+		const CEconItemDefinition *pKeyDef = OfflineCrates_GetKeyForCrate( pCrateDef );
+		FOR_EACH_TRUE_SUBKEY( GetItemsKV(), pItemKV )
+		{
+			if ( pKeyDef && FindItemDefForKV( pItemKV ) == pKeyDef )
+			{
+				unKeyID = ItemIDFromKV( pItemKV );
+				break;
+			}
+		}
+
+		if ( unKeyID == INVALID_ITEM_ID )
+		{
+			char szKeyName[256];
+			if ( pKeyDef )
+			{
+				OfflineInventory_GetItemDefDisplayName( pKeyDef, szKeyName, sizeof( szKeyName ) );
+			}
+			else
+			{
+				V_strncpy( szKeyName, "key", sizeof( szKeyName ) );
+			}
+			Msg( "You need a %s to open this. inv_givecrate gives keys along with crates.\n", szKeyName );
+			return false;
+		}
+	}
+
+	return UnlockCrate( unKeyID, unCrateID );
+}
+
+//-----------------------------------------------------------------------------
 void CTFOfflineInventory::WriteEquippedItemsForServer( KeyValues *pKV ) const
 {
 	KeyValues *pItemsKV = pKV->FindKey( "items", true );
@@ -795,7 +988,7 @@ void CTFOfflineInventory::WriteEquippedItemsForServer( KeyValues *pKV ) const
 //-----------------------------------------------------------------------------
 // Item names
 //-----------------------------------------------------------------------------
-static void GetItemDefDisplayName( const CEconItemDefinition *pItemDef, char *pszOut, int nOutSize )
+void OfflineInventory_GetItemDefDisplayName( const CEconItemDefinition *pItemDef, char *pszOut, int nOutSize )
 {
 	const char *pszToken = pItemDef->GetItemBaseName();
 	const locchar_t *pszLocalized = ( pszToken && pszToken[0] ) ? GLocalizationProvider()->Find( pszToken ) : NULL;
@@ -829,7 +1022,7 @@ static bool IsGiveableDef( const CEconItemDefinition *pItemDef )
 
 // Finds item definitions by index, internal name, or English name.
 // Exact matches win; otherwise every definition containing the text is returned.
-static void FindItemDefs( const char *pszQuery, CUtlVector< const CEconItemDefinition * > &vecOut )
+void OfflineInventory_FindItemDefs( const char *pszQuery, CUtlVector< const CEconItemDefinition * > &vecOut )
 {
 	vecOut.Purge();
 
@@ -853,7 +1046,7 @@ static void FindItemDefs( const char *pszQuery, CUtlVector< const CEconItemDefin
 		if ( !pItemDef )
 			continue;
 
-		GetItemDefDisplayName( pItemDef, szDisplayName, sizeof( szDisplayName ) );
+		OfflineInventory_GetItemDefDisplayName( pItemDef, szDisplayName, sizeof( szDisplayName ) );
 
 		if ( !V_stricmp( pItemDef->GetDefinitionName(), pszQuery ) || !V_stricmp( szDisplayName, pszQuery ) )
 		{
@@ -886,7 +1079,7 @@ static void PrintItemDefList( const CUtlVector< const CEconItemDefinition * > &v
 	char szDisplayName[256];
 	for ( int i = 0; i < vecDefs.Count() && i < nMaxToShow; ++i )
 	{
-		GetItemDefDisplayName( vecDefs[i], szDisplayName, sizeof( szDisplayName ) );
+		OfflineInventory_GetItemDefDisplayName( vecDefs[i], szDisplayName, sizeof( szDisplayName ) );
 		Msg( "  %6d  %-40s  (%s)%s\n", vecDefs[i]->GetDefinitionIndex(), szDisplayName, vecDefs[i]->GetDefinitionName(),
 			vecDefs[i]->IsHidden() ? " [hidden]" : "" );
 	}
@@ -1010,7 +1203,7 @@ static itemid_t ParseItemID( const char *pszArg )
 	return INVALID_ITEM_ID;
 }
 
-static itemid_t ParseExistingItemID( const char *pszArg )
+itemid_t OfflineInventory_ParseExistingItemID( const char *pszArg )
 {
 	const itemid_t unItemID = ParseItemID( pszArg );
 	if ( unItemID == INVALID_ITEM_ID || !TFOfflineInventory().FindItemKV( unItemID ) )
@@ -1059,7 +1252,7 @@ CON_COMMAND( inv_give, "Add an item to your offline backpack.\n"
 	}
 
 	CUtlVector< const CEconItemDefinition * > vecMatches;
-	FindItemDefs( args[1], vecMatches );
+	OfflineInventory_FindItemDefs( args[1], vecMatches );
 	if ( vecMatches.Count() == 0 )
 	{
 		Msg( "No item matches \"%s\". Try inv_search.\n", args[1] );
@@ -1084,6 +1277,14 @@ CON_COMMAND( inv_give, "Add an item to your offline backpack.\n"
 	}
 
 	const CEconItemDefinition *pItemDef = vecMatches[0];
+
+	// Crates need a series number and a key; inv_givecrate handles both.
+	if ( OfflineCrates_IsCrate( pItemDef ) )
+	{
+		Msg( "That's a crate. Use inv_givecrate instead: it sets up the crate's contents and gives you a key. See inv_crates.\n" );
+		return;
+	}
+
 	const itemid_t unItemID = TFOfflineInventory().GiveItem( pItemDef, nQuality );
 	if ( unItemID == INVALID_ITEM_ID )
 		return;
@@ -1098,7 +1299,7 @@ CON_COMMAND( inv_give, "Add an item to your offline backpack.\n"
 	}
 
 	char szDisplayName[256];
-	GetItemDefDisplayName( pItemDef, szDisplayName, sizeof( szDisplayName ) );
+	OfflineInventory_GetItemDefDisplayName( pItemDef, szDisplayName, sizeof( szDisplayName ) );
 	Msg( "Gave %s (item ID %llu).\n", szDisplayName, (unsigned long long)unItemID );
 }
 
@@ -1188,7 +1389,7 @@ CON_COMMAND( inv_search, "Search every item in the game by name.\n"
 	}
 
 	CUtlVector< const CEconItemDefinition * > vecMatches;
-	FindItemDefs( args.ArgS(), vecMatches );
+	OfflineInventory_FindItemDefs( args.ArgS(), vecMatches );
 	if ( vecMatches.Count() == 0 )
 	{
 		Msg( "No item matches \"%s\".\n", args.ArgS() );
@@ -1216,7 +1417,7 @@ CON_COMMAND( inv_list, "List the items in your offline backpack, with their item
 		const CEconItemDefinition *pItemDef = FindItemDefForKV( pItemKV );
 		if ( pItemDef )
 		{
-			GetItemDefDisplayName( pItemDef, szDisplayName, sizeof( szDisplayName ) );
+			OfflineInventory_GetItemDefDisplayName( pItemDef, szDisplayName, sizeof( szDisplayName ) );
 		}
 		else
 		{
@@ -1286,7 +1487,7 @@ CON_COMMAND( inv_setattr, "Set an attribute on an item (unusual effects, paint, 
 		return;
 	}
 
-	const itemid_t unItemID = ParseExistingItemID( args[1] );
+	const itemid_t unItemID = OfflineInventory_ParseExistingItemID( args[1] );
 	if ( unItemID == INVALID_ITEM_ID )
 		return;
 
@@ -1317,7 +1518,7 @@ CON_COMMAND( inv_removeattr, "Remove an attribute you added to an item.\n"
 		return;
 	}
 
-	const itemid_t unItemID = ParseExistingItemID( args[1] );
+	const itemid_t unItemID = OfflineInventory_ParseExistingItemID( args[1] );
 	if ( unItemID == INVALID_ITEM_ID )
 		return;
 
@@ -1349,7 +1550,7 @@ CON_COMMAND( inv_paint, "Paint an item using the colors from a paint can.\n"
 		return;
 	}
 
-	const itemid_t unItemID = ParseExistingItemID( args[1] );
+	const itemid_t unItemID = OfflineInventory_ParseExistingItemID( args[1] );
 	if ( unItemID == INVALID_ITEM_ID )
 		return;
 
@@ -1361,7 +1562,7 @@ CON_COMMAND( inv_paint, "Paint an item using the colors from a paint can.\n"
 	};
 
 	CUtlVector< const CEconItemDefinition * > vecMatches;
-	FindItemDefs( args[2], vecMatches );
+	OfflineInventory_FindItemDefs( args[2], vecMatches );
 
 	// Keep only definitions that actually carry a paint color.
 	CUtlVector< const CEconItemDefinition * > vecPaints;
@@ -1414,7 +1615,7 @@ CON_COMMAND( inv_paint, "Paint an item using the colors from a paint can.\n"
 	}
 
 	char szDisplayName[256];
-	GetItemDefDisplayName( pPaintDef, szDisplayName, sizeof( szDisplayName ) );
+	OfflineInventory_GetItemDefDisplayName( pPaintDef, szDisplayName, sizeof( szDisplayName ) );
 	Msg( "Painted item %llu with %s.\n", (unsigned long long)unItemID, szDisplayName );
 }
 
@@ -1431,7 +1632,7 @@ CON_COMMAND( inv_delete, "Delete an item from your offline backpack.\n"
 		return;
 	}
 
-	const itemid_t unItemID = ParseExistingItemID( args[1] );
+	const itemid_t unItemID = OfflineInventory_ParseExistingItemID( args[1] );
 	if ( unItemID == INVALID_ITEM_ID )
 		return;
 

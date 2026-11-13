@@ -120,6 +120,8 @@ $Project "Client (TF)"
 			$File	"$SRCDIR\game\shared\tf\tf_offline_inventory_shared.h"
 			$File	"$SRCDIR\game\client\tf\tf_offline_inventory.cpp"
 			$File	"$SRCDIR\game\client\tf\tf_offline_inventory.h"
+			$File	"$SRCDIR\game\client\tf\tf_offline_crates.cpp"
+			$File	"$SRCDIR\game\client\tf\tf_offline_crates.h"
 			$File	"$SRCDIR\game\shared\tf\tf_item_wearable.cpp"
 			$File	"$SRCDIR\game\shared\tf\tf_item_wearable.h"
 

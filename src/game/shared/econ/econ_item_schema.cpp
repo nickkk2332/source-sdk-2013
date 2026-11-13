@@ -1092,6 +1092,8 @@ bool lootlist_attrib_t::BItemPassAllCriteria( const CEconItemDefinition* pItemDe
 
 CLootlistJob::CLootlistJob( const char *pszOwnerName )
 	: m_pszOwnerName( pszOwnerName )
+	, m_pszTemplateName( NULL )
+	, m_flChanceToRunJob( 0.f )
 {
 }
 
@@ -6000,7 +6002,10 @@ bool CEconItemSchema::BInitLootlistJobTemplates( KeyValues *pKVLootlistJobTempla
 			NULL != pJob,
 			"%s: Failed to create CreateLootlistJob '%s'", __FUNCTION__, pszJobName );
 
-		m_dictLootlistJobTemplates.Insert( pszJobName, pJob );
+		const int iJobTemplate = m_dictLootlistJobTemplates.Insert( pszJobName, pJob );
+
+		// Copies made by BAddLootlistJobFromTemplates() carry this along.
+		pJob->SetTemplateName( m_dictLootlistJobTemplates.GetElementName( iJobTemplate ) );
 	}
 
 	return true;

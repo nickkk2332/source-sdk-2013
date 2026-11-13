@@ -516,12 +516,19 @@ public:
 	const CUtlVector< RandomAttributeInfo_t >& GetAttributes() const { return m_vecAttributes; }
 	const CUtlVector<loot_list_additional_drop_t>& GetAdditionalDrops() const { return m_vecAdditionalDrops; }
 
+	// The client copy of the schema has no "chance" values (Valve keeps those on
+	// their item servers), so this is usually 0. The offline inventory uses the
+	// template name to decide what odds to use instead.
+	float GetChanceToRunJob() const { return m_flChanceToRunJob; }
+	const char *GetTemplateName() const { return m_pszTemplateName; }
+	void SetTemplateName( const char *pszTemplateName ) { m_pszTemplateName = pszTemplateName; }
 
 private:
 	bool AddRandomAtrributes( KeyValues *pRandomAttributesKV, CEconItemSchema &pschema, CUtlVector<CUtlString> *pVecErrors = NULL );
 	bool AddRandomAttributesFromTemplates( KeyValues *pRandomAttributesKV, CEconItemSchema &pschema, CUtlVector<CUtlString> *pVecErrors = NULL );
 
 	const char *		m_pszOwnerName;
+	const char *		m_pszTemplateName;		// set if this job came from lootlist_job_template_definitions
 	float				m_flChanceToRunJob;
 
 	CUtlVector< RandomAttributeInfo_t > m_vecAttributes;

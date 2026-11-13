@@ -22,6 +22,7 @@
 #include "gc_clientsystem.h"
 #include "collection_crafting_panel.h"
 #include "tf_shareddefs.h"
+#include "tf_offline_inventory.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include <tier0/memdbgon.h>
@@ -141,13 +142,14 @@ void CConfirmDecodeDialog::Apply( void )
 
 	EconUI()->Gamestats_ItemTransaction( IE_ITEM_USED_TOOL, m_pToolModelPanel->GetItem(), "unlocked_supply_crate", iSeries );
 
-	GCClientSystem()->BSendMessage( msg );
-
 	CCollectionCraftingPanel *pPanel = EconUI()->GetBackpackPanel()->GetCollectionCraftPanel();
 	if ( pPanel )
 	{
 		pPanel->SetWaitingForItem( kEconItemOrigin_FoundInCrate );
 	}
+
+	// There is no item server: the offline inventory opens the crate (next frame).
+	TFOfflineInventory().RequestUnlockCrate( msg.Body().m_unToolItemID, msg.Body().m_unSubjectItemID );
 }
 
 
@@ -185,6 +187,23 @@ protected:
 
 
 //-----------------------------------------------------------------------------
+void PlayCrateUnlockSound()
+{
+	if ( s_iCrateType == CRATETYPE_ROBO )
+	{
+		vgui::surface()->PlaySound( ROBOCRATE_UNLOCKING_SND );
+	}
+	else if ( s_iCrateType == CRATETYPE_WINTER )
+	{
+		vgui::surface()->PlaySound( "ui/item_open_holiday_crate.wav" );
+	}
+	else
+	{
+		vgui::surface()->PlaySound( "ui/item_open_crate_short.wav" );
+	}
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: GC Msg handler to receive the decoder ring response
 //-----------------------------------------------------------------------------
 class CGCUnlockCrateResponse : public GCSDK::CGCClientJob
@@ -196,18 +215,7 @@ public:
 	{
 		GCSDK::CGCMsg<MsgGCStandardResponse_t> msg( pNetPacket );
 
-		if ( s_iCrateType == CRATETYPE_ROBO )
-		{
-			vgui::surface()->PlaySound( ROBOCRATE_UNLOCKING_SND );
-		}
-		else if ( s_iCrateType == CRATETYPE_WINTER )
-		{
-			vgui::surface()->PlaySound( "ui/item_open_holiday_crate.wav" );
-		}
-		else
-		{
-			vgui::surface()->PlaySound( "ui/item_open_crate_short.wav" );
-		}
+		PlayCrateUnlockSound();
 
 		return true;
 	}

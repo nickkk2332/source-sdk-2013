@@ -45,6 +45,7 @@
 #include "tf_matchmaking_dashboard_explanations.h"
 #include "tf_matchmaking_dashboard_parent_manager.h"
 #include "tf_shareddefs.h"
+#include "tf_offline_inventory.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include <tier0/memdbgon.h>
@@ -676,13 +677,14 @@ static void OpenKeylessCase( bool bConfirmed, void *pContext )
 
 		EconUI()->Gamestats_ItemTransaction( IE_ITEM_USED_CONSUMABLE, pCaseEconItemView, "unlocked_supply_crate", iSeries );
 
-		GCClientSystem()->BSendMessage( msg );
-
 		CCollectionCraftingPanel *pPanel = EconUI()->GetBackpackPanel()->GetCollectionCraftPanel();
 		if ( pPanel )
 		{
 			pPanel->SetWaitingForItem( kEconItemOrigin_FoundInCrate );
 		}
+
+		// There is no item server: the offline inventory opens the case (next frame).
+		TFOfflineInventory().RequestUnlockCrate( msg.Body().m_unToolItemID, msg.Body().m_unSubjectItemID );
 	}
 	delete pConfirmContext;
 }

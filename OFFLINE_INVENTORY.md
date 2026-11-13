@@ -55,6 +55,49 @@ inv_give_all cosmetics
 Attribute names are the ones in TF2's `scripts/items/items_game.txt`. If a name
 is wrong, the command says so and changes nothing.
 
+## Crates
+
+Crates and cases open from the backpack like in real TF2: use the key on the
+crate (or open a keyless case), and you get the unboxing reveal.
+
+| Command | What it does |
+| --- | --- |
+| `inv_crates [text]` | List crate series numbers and what each crate is called. |
+| `inv_givecrate <series or name> [how many]` | Add crates, plus a matching key for each. |
+| `inv_opencrate <id \| last>` | Open a crate from the console instead, using a key you have. |
+
+```
+inv_crates cosmetic
+inv_givecrate 151 10
+inv_givecrate 1
+```
+
+What comes out is decided the way Valve's item servers did it, using the
+contents lists that ship with the game:
+
+- **Cases** roll a grade first: Mercenary about 80%, Commando 16%, Assassin 3.2%,
+  Elite 0.6%. Then there's a chance the item is Strange, a chance a hat is
+  Unusual (with that case's effects), and a chance of bonus items.
+- **Old Mann Co. Supply Crates** that say "or an Exceedingly Rare Special Item!"
+  can give an Unusual hat with that crate's effect series.
+- **Strange crates** give Strange weapons; killstreak and war paint crates add
+  their sheens and wear.
+
+The game's copy of the item data has the real odds stripped out, so you can
+tune them (each is a number from 0 to 1, saved between sessions):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `inv_crate_unusual_chance` | `0.01` | Chance of an Unusual where the crate can give one. |
+| `inv_crate_strange_chance` | `0.1` | Chance an item from a case is Strange. |
+| `inv_crate_bonus_chance` | `0.05` | Chance of each possible bonus item from a case. |
+
+Set `inv_crate_unusual_chance 1` for a night of nothing but Unusuals.
+
+About 25 old event crates (for example the 2010 Winter Crate and the 2013 Robo
+Crate) list contents that only ever existed on Valve's servers. Those don't
+appear in `inv_crates` and can't be opened.
+
 ## The save file
 
 Your items are saved to `game/mod_tf/cfg/offline_inventory.txt`. It's plain text
@@ -79,7 +122,8 @@ numbers are just an example):
 
 - `def` is the item number (see `inv_search`); `name` is only used if that number
   stops existing in a future game update.
-- `slot` is the backpack slot (1 to 4000); `0` means "new, not placed yet".
+- `slot` is the backpack slot (1 to 4000); `0` means "new, not placed yet"
+  (`new_reason` then says how it arrived, e.g. found in a crate).
 - You can also add `"custom_name"` and `"custom_desc"` to an item.
 
 If the file can't be read when the game starts, you'll get an empty backpack and
@@ -90,7 +134,9 @@ What's equipped is stored separately, in `game/mod_tf/cfg/local_loadout.txt`.
 ## Not done yet
 
 - Strange counters don't go up: kills aren't recorded anywhere yet.
-- The in-game tools (paint cans, name tags, crates, crafting, the store) still
-  expect Valve's servers, so using them from the backpack does nothing. Use the
-  commands above instead for now.
+- The other in-game tools (paint cans, name tags, strange parts, crafting, the
+  store) still expect Valve's servers, so using them from the backpack does
+  nothing. Use the commands above instead for now.
+- Bonus items that need a tool to be set up first (the Taunt Unusualifier,
+  gifts) don't drop from cases yet.
 - Backpack "sort" does nothing yet; dragging items around does work.

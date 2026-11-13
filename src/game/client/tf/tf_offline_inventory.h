@@ -47,8 +47,22 @@ public:
 
 	bool		IsLoaded() const { return m_bLoaded; }
 
-	// Creates a new item in the backpack. Returns INVALID_ITEM_ID on failure.
+	// Creates a new item straight into a free backpack slot. Returns INVALID_ITEM_ID on failure.
+	// nQuality -1 means the item's usual quality.
 	itemid_t	GiveItem( const CEconItemDefinition *pItemDef, int nQuality );
+
+	// Creates an item. pAttributes (attribute name -> value text) may be NULL.
+	// nUnacknowledgedReason 0 places it in a free backpack slot; otherwise
+	// (an UNACK_ITEM_* value) it arrives as a new item the game shows you.
+	itemid_t	CreateItem( const CEconItemDefinition *pItemDef, int nQuality, KeyValues *pAttributes,
+							eEconItemOrigin eOrigin, int nUnacknowledgedReason );
+
+	// Crates. The backpack UI calls RequestUnlockCrate(); the crate is opened
+	// on the next Think(), the way a reply from an item server would arrive.
+	// unKeyID is INVALID_ITEM_ID for crates that don't need a key.
+	void		RequestUnlockCrate( itemid_t unKeyID, itemid_t unCrateID );
+	bool		UnlockCrate( itemid_t unKeyID, itemid_t unCrateID );
+	bool		OpenCrateWithAnyKey( itemid_t unCrateID );
 
 	// Attributes are stored by name, as text (e.g. "attach particle effect" "13").
 	bool		SetItemAttribute( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, const char *pszValue );
@@ -81,6 +95,7 @@ private:
 	void		Save();
 	bool		Resubscribe();
 	void		ApplyPendingMoves();
+	void		ApplyPendingUnlocks();
 	bool		ApplyItemPosition( itemid_t unItemID, uint32 unBackendPosition );
 
 	bool		BuildEconItem( KeyValues *pItemKV, CEconItem *pItem ) const;
@@ -109,11 +124,23 @@ private:
 	};
 	CUtlVector< PendingMove_t > m_vecPendingMoves;
 
+	struct PendingUnlock_t
+	{
+		itemid_t	m_unKeyID;
+		itemid_t	m_unCrateID;
+	};
+	CUtlVector< PendingUnlock_t > m_vecPendingUnlocks;
+
 	// How many items sit in each backpack slot (index 0 = not placed yet).
 	// A count rather than a flag because two items share a slot mid-swap.
 	int			m_nSlotUseCount[ MAX_NUM_BACKPACK_SLOTS + 1 ];
 };
 
 CTFOfflineInventory &TFOfflineInventory();
+
+// Helpers shared with the other offline inventory console commands.
+void		OfflineInventory_GetItemDefDisplayName( const CEconItemDefinition *pItemDef, char *pszOut, int nOutSize );
+void		OfflineInventory_FindItemDefs( const char *pszQuery, CUtlVector< const CEconItemDefinition * > &vecOut );
+itemid_t	OfflineInventory_ParseExistingItemID( const char *pszArg );	// prints why on failure
 
 #endif // TF_OFFLINE_INVENTORY_H

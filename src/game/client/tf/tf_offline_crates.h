@@ -17,6 +17,7 @@
 #endif
 
 #include "utlvector.h"
+#include "utlstring.h"
 
 class KeyValues;
 class CEconItemDefinition;
@@ -47,6 +48,13 @@ private:
 // it are bonus items. The caller owns the items (PurgeAndDeleteElements).
 // Returns false if the game doesn't know what the crate contains.
 bool OfflineCrates_RollCrate( const IEconItemInterface *pCrate, CUtlVector< COfflineLootItem * > &vecOut );
+
+// Schema helpers
+// The value of an attribute an item definition always has (e.g. a paint can's color), as text.
+bool OfflineCrates_GetStaticAttribValue( const CEconItemDefinition *pItemDef, const char *pszAttrName, CUtlString &strValue );
+// Picks one attribute from a schema attribute template (e.g. a list of effects) the
+// way a crate would, for an item of pItemDef. Returns the attribute to set on the item.
+bool OfflineCrates_RollAttributeTemplate( const char *pszTemplateName, const CEconItemDefinition *pItemDef, CUtlString &strAttrName, CUtlString &strValue );
 
 // Crates and keys
 bool OfflineCrates_IsCrate( const CEconItemDefinition *pItemDef );

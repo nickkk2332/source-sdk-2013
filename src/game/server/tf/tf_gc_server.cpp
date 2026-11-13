@@ -4157,6 +4157,89 @@ bool CTFGCServerSystem::ApplyClientInventory( CSteamID steamID, KeyValues* pKVRe
 	return true;
 }
 
+//-----------------------------------------------------------------------------
+// Offline inventory: Strange counters
+//
+// When something happens that a Strange item counts, the game builds a
+// message for the item server. With no item server, we work out which of the
+// item's counters it counts towards, update our copy of the item, and tell the
+// owner's game, which keeps the save file.
+//-----------------------------------------------------------------------------
+extern bool EconEntity_KillEaterEventPassesRestrictionCheck( const IEconItemInterface *pEconInterface, const CEconItemAttributeDefinition *pRestrictionAttribDef, const CEconItemAttributeDefinition *pRestrictionValueAttribDef, const CSteamID VictimSteamID );
+
+static void OfflineInventory_ApplyKillEaterIncrement( const CMsgIncrementKillCountAttribute &msg )
+{
+	CTFPlayer *pOwner = ToTFPlayer( UTIL_PlayerBySteamID( CSteamID( msg.killer_steam_id() ) ) );
+	CTFPlayerInventory *pInventory = pOwner ? pOwner->Inventory() : NULL;
+	CEconItemView *pItem = pInventory ? pInventory->GetInventoryItemByItemID( msg.item_id() ) : NULL;
+	if ( !pItem )
+		return;
+
+	CEconItem *pSOItem = pItem->GetSOCData();
+	const int nIncrement = msg.has_increment_value() ? (int)msg.increment_value() : 1;
+	const kill_eater_event_t eEvent = (kill_eater_event_t)msg.event_type();
+	const CSteamID victimSteamID( msg.victim_steam_id() );
+
+	for ( int i = 0; i < GetKillEaterAttrCount(); i++ )
+	{
+		const CEconItemAttributeDefinition *pScoreAttr = GetKillEaterAttr_Score( i );
+		attrib_value_t unScore = 0;
+		if ( !pScoreAttr || !::FindAttribute( pItem, pScoreAttr, &unScore ) )
+			continue;
+
+		// No counter type means "kills", as on the original Strange items.
+		float flEventType;
+		const kill_eater_event_t eSlotEvent = FindAttribute_UnsafeBitwiseCast< attrib_value_t >( pItem, GetKillEaterAttr_Type( i ), &flEventType )
+			? (kill_eater_event_t)(int)flEventType
+			: kKillEaterEvent_PlayerKill;
+		if ( eSlotEvent != eEvent )
+			continue;
+
+		// Strange filters (e.g. "only on this map").
+		if ( !EconEntity_KillEaterEventPassesRestrictionCheck( pItem, GetKillEaterAttr_Restriction( i ), GetKillEaterAttr_RestrictionValue( i ), victimSteamID ) )
+			continue;
+
+		if ( pSOItem )
+		{
+			pSOItem->SetDynamicAttributeValue( pScoreAttr, (attrib_value_t)( unScore + nIncrement ) );
+		}
+
+		CSingleUserRecipientFilter filter( pOwner );
+		filter.MakeReliable();
+		UserMessageBegin( filter, "OfflineKillEater" );
+			WRITE_LONG( (int)( msg.item_id() & 0xFFFFFFFF ) );
+			WRITE_LONG( (int)( msg.item_id() >> 32 ) );
+			WRITE_SHORT( pScoreAttr->GetDefinitionIndex() );
+			WRITE_LONG( nIncrement );
+		MessageEnd();
+	}
+}
+
+bool OfflineInventory_ServerInterceptGCMessage( uint32 unMsgType, const ::google::protobuf::Message &body )
+{
+	if ( unMsgType == k_EMsgGC_IncrementKillCountAttribute )
+	{
+		const CMsgIncrementKillCountAttribute *pMsg = dynamic_cast< const CMsgIncrementKillCountAttribute * >( &body );
+		if ( pMsg )
+		{
+			OfflineInventory_ApplyKillEaterIncrement( *pMsg );
+		}
+		return true;
+	}
+
+	if ( unMsgType == k_EMsgGC_IncrementKillCountAttribute_Multiple )
+	{
+		const CMsgIncrementKillCountAttribute_Multiple *pMsg = dynamic_cast< const CMsgIncrementKillCountAttribute_Multiple * >( &body );
+		for ( int i = 0; pMsg && i < pMsg->msgs_size(); i++ )
+		{
+			OfflineInventory_ApplyKillEaterIncrement( pMsg->msgs( i ) );
+		}
+		return true;
+	}
+
+	return false;
+}
+
 void CTFGCServerSystem::SDK_ApplyInventoryInfo(CGCClientSharedObjectCache* pCache, KeyValues* pKVRequest)
 {
 	// update any data from the client to match SDK_AddServerInventoryInfo

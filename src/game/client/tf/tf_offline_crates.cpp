@@ -939,3 +939,37 @@ CON_COMMAND( inv_opencrate, "Open a crate from the console, using a key from you
 
 	TFOfflineInventory().OpenCrateWithAnyKey( unCrateID );
 }
+
+//=============================================================================
+// Helpers shared with the other offline inventory code
+//=============================================================================
+bool OfflineCrates_GetStaticAttribValue( const CEconItemDefinition *pItemDef, const char *pszAttrName, CUtlString &strValue )
+{
+	const static_attrib_t *pAttrib = FindStaticAttrib( pItemDef, pszAttrName );
+	const CEconItemAttributeDefinition *pAttrDef = pAttrib ? GetItemSchema()->GetAttributeDefinition( pAttrib->iDefIndex ) : NULL;
+	if ( !pAttrDef )
+		return false;
+
+	GetStaticAttribValueString( pAttrDef, pAttrib->m_value, strValue );
+	return true;
+}
+
+bool OfflineCrates_RollAttributeTemplate( const char *pszTemplateName, const CEconItemDefinition *pItemDef, CUtlString &strAttrName, CUtlString &strValue )
+{
+	const random_attrib_t *pTemplate = pszTemplateName ? GetItemSchema()->GetRandomAttributeTemplateByName( pszTemplateName ) : NULL;
+	if ( !pTemplate || !pItemDef )
+		return false;
+
+	COfflineLootItem item;
+	item.m_pItemDef = pItemDef;
+	OfflineRollState_t state;
+	ApplyRandomAttributeGroup( pTemplate, &item, state );
+
+	KeyValues *pAttrKV = item.m_pAttributes ? item.m_pAttributes->GetFirstValue() : NULL;
+	if ( !pAttrKV )
+		return false;
+
+	strAttrName = pAttrKV->GetName();
+	strValue = pAttrKV->GetString();
+	return true;
+}

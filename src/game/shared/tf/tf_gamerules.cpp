@@ -10401,6 +10401,10 @@ static CSteamID GetSteamIDForKillEaterScoring( CTFPlayer *pPlayer )
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
+// Real TF2 doesn't count most events against bots. Offline, you mostly play bots.
+ConVar inv_strange_counts_bots( "inv_strange_counts_bots", "1", FCVAR_REPLICATED,
+	"Offline inventory: let kills and other events against bots count on Strange items." );
+
 class CStrangeEventValidator
 {
 public:
@@ -10452,7 +10456,7 @@ private:
 		m_VictimSteamID = GetSteamIDForKillEaterScoring( pVictim );
 		if ( !m_VictimSteamID.IsValid() )
 		{
-			if ( !GetItemSchema()->GetKillEaterScoreTypeAllowsBotVictims( m_eEventType ) )
+			if ( !GetItemSchema()->GetKillEaterScoreTypeAllowsBotVictims( m_eEventType ) && !inv_strange_counts_bots.GetBool() )
 				return false;
 		}
 

@@ -86,6 +86,7 @@
 #include "gc_clientsystem.h"
 #include "tf_gcmessages.h"
 #include "tf_gc_client.h"
+#include "tf_offline_inventory.h"
 
 #include "tf_wardata.h"
 
@@ -2527,6 +2528,20 @@ USER_MESSAGE( BuiltObject )
 USER_MESSAGE( SdkRequestEquipment )
 {
 	GTFGCClientSystem()->ServerRequestEquipment();
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: A Strange counter on one of our items went up (offline inventory).
+//-----------------------------------------------------------------------------
+USER_MESSAGE( OfflineKillEater )
+{
+	const uint32 unItemIDLow = (uint32)msg.ReadLong();
+	const uint32 unItemIDHigh = (uint32)msg.ReadLong();
+	const int iAttrDefIndex = msg.ReadShort() & 0xFFFF;
+	const int nIncrement = msg.ReadLong();
+
+	const itemid_t unItemID = ( (itemid_t)unItemIDHigh << 32 ) | unItemIDLow;
+	TFOfflineInventory().AddToItemAttribute( unItemID, GetItemSchema()->GetAttributeDefinition( iAttrDefIndex ), nIncrement );
 }
 
 float PlaySoundEntry( const char* pszSoundEntryName )

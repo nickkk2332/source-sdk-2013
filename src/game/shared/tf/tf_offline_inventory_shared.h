@@ -52,6 +52,19 @@ private:
 	CUtlVector< Object_t > m_vecObjects;
 };
 
+namespace google
+{
+	namespace protobuf
+	{
+		class Message;
+	}
+}
+
+// Server: called from GCClientSystem()->BSendMessage(). Strange counter
+// updates go to the item's owner (whose game keeps the save file) instead of
+// an item server. Returns true if the message was handled.
+bool OfflineInventory_ServerInterceptGCMessage( uint32 unMsgType, const ::google::protobuf::Message &body );
+
 // Item <-> text, used to carry items from client to server inside KeyValues.
 bool OfflineInventory_EncodeItem( const CEconItem &item, CUtlString &strBase64Out );
 bool OfflineInventory_DecodeItemBytes( const char *pszBase64, std::string &strBytesOut );

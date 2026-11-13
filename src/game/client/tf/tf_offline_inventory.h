@@ -67,6 +67,16 @@ public:
 	// Attributes are stored by name, as text (e.g. "attach particle effect" "13").
 	bool		SetItemAttribute( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, const char *pszValue );
 	bool		RemoveItemAttribute( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef );
+	bool		AddToItemAttribute( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, int nAmount );
+
+	// Name tag / description tag text. NULL or "" removes it.
+	bool		SetItemCustomText( itemid_t unItemID, bool bDescription, const char *pszText );
+	bool		SetItemQuality( itemid_t unItemID, int nQuality );
+	bool		SetItemStyle( itemid_t unItemID, int nStyle );
+
+	// The item as the game sees it (definition and attributes combined). NULL if it doesn't exist.
+	const CEconItem				*GetLiveItem( itemid_t unItemID ) const { return FindLiveItem( unItemID ); }
+	const CEconItemDefinition	*GetItemDef( itemid_t unItemID ) const;
 
 	bool		DeleteItem( itemid_t unItemID );
 	int			DeleteAllItems();
@@ -94,6 +104,7 @@ private:
 	bool		Load();
 	void		Save();
 	bool		Resubscribe();
+	bool		SetItemAttributeInternal( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, const char *pszValue, bool bNotifyServer );
 	void		ApplyPendingMoves();
 	void		ApplyPendingUnlocks();
 	bool		ApplyItemPosition( itemid_t unItemID, uint32 unBackendPosition );

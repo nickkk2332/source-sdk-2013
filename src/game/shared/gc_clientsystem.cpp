@@ -17,6 +17,13 @@
 #include "secure_command_line.h"
 #endif
 
+#ifdef TF_CLIENT_DLL
+#include "tf_offline_tools.h"
+#endif
+#ifdef TF_DLL
+#include "tf_offline_inventory_shared.h"
+#endif
+
 //
 // TODO: NO_STEAM support!
 //
@@ -106,6 +113,12 @@ bool CGCClientSystem::BSendMessage( uint32 unMsgType, const uint8 *pubData, uint
 //-----------------------------------------------------------------------------
 bool CGCClientSystem::BSendMessage( const GCSDK::CGCMsgBase& msg )									
 { 
+#ifdef TF_CLIENT_DLL
+	// There is no item server: requests the offline inventory can carry out go there instead.
+	if ( OfflineTools_InterceptStructMessage( msg.Hdr().m_eMsg, msg.PubPkt() + msg.CubHdr(), msg.CubBody() ) )
+		return true;
+#endif
+
 	return m_GCClient.BSendMessage( msg ); 
 }
 
@@ -115,6 +128,18 @@ bool CGCClientSystem::BSendMessage( const GCSDK::CGCMsgBase& msg )
 //-----------------------------------------------------------------------------
 bool CGCClientSystem::BSendMessage( const GCSDK::CProtoBufMsgBase& msg )									
 { 
+#ifdef TF_CLIENT_DLL
+	// There is no item server: requests the offline inventory can carry out go there instead.
+	if ( msg.GetGenericBody() && OfflineTools_InterceptProtoMessage( msg.GetEMsg(), *msg.GetGenericBody() ) )
+		return true;
+#endif
+
+#ifdef TF_DLL
+	// Strange counter updates go to the item's owner instead (see tf_gc_server.cpp).
+	if ( msg.GetGenericBody() && OfflineInventory_ServerInterceptGCMessage( msg.GetEMsg(), *msg.GetGenericBody() ) )
+		return true;
+#endif
+
 	return m_GCClient.BSendMessage( msg ); 
 }
 

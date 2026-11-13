@@ -37,6 +37,7 @@
 #include "tf_offline_inventory.h"
 #include "tf_offline_inventory_shared.h"
 #include "tf_offline_crates.h"
+#include "tf_offline_tools.h"
 #include "tool_items/decoder_ring_tool.h"
 #include "tf_item_inventory.h"
 #include "tf_item_system.h"
@@ -157,6 +158,7 @@ void CTFOfflineInventory::Think()
 	}
 
 	ApplyPendingUnlocks();
+	OfflineTools_ProcessPendingRequests();
 	ApplyPendingMoves();
 
 	if ( m_bDirty )
@@ -619,6 +621,12 @@ itemid_t CTFOfflineInventory::CreateItem( const CEconItemDefinition *pItemDef, i
 //-----------------------------------------------------------------------------
 bool CTFOfflineInventory::SetItemAttribute( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, const char *pszValue )
 {
+	return SetItemAttributeInternal( unItemID, pAttrDef, pszValue, true );
+}
+
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::SetItemAttributeInternal( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, const char *pszValue, bool bNotifyServer )
+{
 	KeyValues *pItemKV = FindItemKV( unItemID );
 	if ( !pItemKV || !pAttrDef || !pszValue )
 		return false;
@@ -630,9 +638,93 @@ bool CTFOfflineInventory::SetItemAttribute( itemid_t unItemID, const CEconItemAt
 	pItemKV->FindKey( "attributes", true )->SetString( pAttrDef->GetDefinitionName(), pszValue );
 
 	UpdateLiveItem( pItemKV );
+	if ( bNotifyServer )
+	{
+		NotifyEquipmentChanged();
+	}
+	m_bDirty = true;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: Add to a counter attribute (e.g. a Strange kill count).
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::AddToItemAttribute( itemid_t unItemID, const CEconItemAttributeDefinition *pAttrDef, int nAmount )
+{
+	const CEconItem *pLiveItem = FindLiveItem( unItemID );
+	if ( !pLiveItem || !pAttrDef )
+		return false;
+
+	uint32 unValue = 0;
+	::FindAttribute( pLiveItem, pAttrDef, &unValue );
+
+	const int64 nNewValue = MAX( (int64)unValue + nAmount, (int64)0 );
+
+	// Not worth re-sending the whole loadout to the server for each kill; the
+	// server already counted this one in its own copy.
+	return SetItemAttributeInternal( unItemID, pAttrDef, CFmtStr( "%u", (uint32)nNewValue ), false );
+}
+
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::SetItemCustomText( itemid_t unItemID, bool bDescription, const char *pszText )
+{
+	KeyValues *pItemKV = FindItemKV( unItemID );
+	if ( !pItemKV )
+		return false;
+
+	const char *pszKey = bDescription ? "custom_desc" : "custom_name";
+	if ( pszText && pszText[0] )
+	{
+		pItemKV->SetString( pszKey, pszText );
+	}
+	else
+	{
+		KeyValues *pTextKV = pItemKV->FindKey( pszKey );
+		if ( !pTextKV )
+			return false;
+		pItemKV->RemoveSubKey( pTextKV );
+		pTextKV->deleteThis();
+	}
+
+	UpdateLiveItem( pItemKV );
 	NotifyEquipmentChanged();
 	m_bDirty = true;
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::SetItemQuality( itemid_t unItemID, int nQuality )
+{
+	KeyValues *pItemKV = FindItemKV( unItemID );
+	if ( !pItemKV || nQuality < 0 || nQuality >= AE_MAX_TYPES )
+		return false;
+
+	pItemKV->SetInt( "quality", nQuality );
+	UpdateLiveItem( pItemKV );
+	NotifyEquipmentChanged();
+	m_bDirty = true;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+bool CTFOfflineInventory::SetItemStyle( itemid_t unItemID, int nStyle )
+{
+	KeyValues *pItemKV = FindItemKV( unItemID );
+	if ( !pItemKV || nStyle < 0 || nStyle > 255 )
+		return false;
+
+	pItemKV->SetInt( "style", nStyle );
+	UpdateLiveItem( pItemKV );
+	NotifyEquipmentChanged();
+	m_bDirty = true;
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+const CEconItemDefinition *CTFOfflineInventory::GetItemDef( itemid_t unItemID ) const
+{
+	KeyValues *pItemKV = FindItemKV( unItemID );
+	return pItemKV ? FindItemDefForKV( pItemKV ) : NULL;
 }
 
 //-----------------------------------------------------------------------------
@@ -1304,14 +1396,37 @@ CON_COMMAND( inv_give, "Add an item to your offline backpack.\n"
 }
 
 //-----------------------------------------------------------------------------
+// Tools that can be used from the backpack in the offline inventory.
+static bool IsUsableOfflineTool( const CEconItemDefinition *pItemDef )
+{
+	static const char *s_pszToolTypes[] =
+	{
+		"paint_can", "name", "desc", "strange_part", "strange_count_transfer",
+		"strangifier", "killstreakifier", "paintkit_weapon_festivizer", "unusualifier",
+	};
+
+	const IEconTool *pTool = pItemDef->GetEconTool();
+	if ( !pTool || !pTool->GetTypeName() )
+		return false;
+
+	for ( int i = 0; i < ARRAYSIZE( s_pszToolTypes ); ++i )
+	{
+		if ( !V_stricmp( pTool->GetTypeName(), s_pszToolTypes[i] ) )
+			return true;
+	}
+	return false;
+}
+
 CON_COMMAND( inv_give_all, "Add one of every item you don't already have.\n"
-	"  Usage: inv_give_all [all | weapons | cosmetics | taunts]" )
+	"  Usage: inv_give_all [all | weapons | cosmetics | taunts | tools]\n"
+	"  \"tools\" gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits and the like." )
 {
 	if ( !CheckInventoryReady() )
 		return;
 
 	const char *pszFilter = args.ArgC() >= 2 ? args[1] : "all";
 	const bool bAll = !V_stricmp( pszFilter, "all" );
+	const bool bTools = !V_stricmp( pszFilter, "tools" );
 	EOfflineItemCategory eOnly = kCategory_None;
 	if ( !V_stricmp( pszFilter, "weapons" ) )
 		eOnly = kCategory_Weapon;
@@ -1319,9 +1434,9 @@ CON_COMMAND( inv_give_all, "Add one of every item you don't already have.\n"
 		eOnly = kCategory_Cosmetic;
 	else if ( !V_stricmp( pszFilter, "taunts" ) )
 		eOnly = kCategory_Taunt;
-	else if ( !bAll )
+	else if ( !bAll && !bTools )
 	{
-		Msg( "Usage: inv_give_all [all | weapons | cosmetics | taunts]\n" );
+		Msg( "Usage: inv_give_all [all | weapons | cosmetics | taunts | tools]\n" );
 		return;
 	}
 
@@ -1341,14 +1456,25 @@ CON_COMMAND( inv_give_all, "Add one of every item you don't already have.\n"
 	FOR_EACH_MAP( mapItems, i )
 	{
 		const CEconItemDefinition *pItemDef = mapItems[i];
-		if ( !pItemDef || !IsGiveableDef( pItemDef ) || pItemDef->IsTool() || pItemDef->IsBundle() )
+		if ( !pItemDef || !IsGiveableDef( pItemDef ) || pItemDef->IsBundle() )
 			continue;
 
-		const EOfflineItemCategory eCategory = GetItemCategory( pItemDef );
-		if ( eCategory == kCategory_None )
-			continue;
-		if ( !bAll && eCategory != eOnly )
-			continue;
+		if ( bTools )
+		{
+			if ( !IsUsableOfflineTool( pItemDef ) )
+				continue;
+		}
+		else
+		{
+			if ( pItemDef->IsTool() )
+				continue;
+
+			const EOfflineItemCategory eCategory = GetItemCategory( pItemDef );
+			if ( eCategory == kCategory_None )
+				continue;
+			if ( !bAll && eCategory != eOnly )
+				continue;
+		}
 
 		if ( setOwnedDefs.Find( pItemDef->GetDefinitionIndex() ) != setOwnedDefs.InvalidIndex() )
 			continue;
@@ -1587,31 +1713,10 @@ CON_COMMAND( inv_paint, "Paint an item using the colors from a paint can.\n"
 	}
 
 	const CEconItemDefinition *pPaintDef = vecPaints[0];
-	bool bAnySecondColor = false;
-
-	for ( int iAttr = 0; iAttr < ARRAYSIZE( pTintAttrs ); ++iAttr )
+	if ( !OfflineTools_PaintItem( unItemID, pPaintDef ) )
 	{
-		const CEconItemAttributeDefinition *pAttrDef = pTintAttrs[iAttr];
-		if ( !pAttrDef || !pAttrDef->GetAttributeType() )
-			continue;
-
-		const CUtlVector< static_attrib_t > &vecStaticAttrs = pPaintDef->GetStaticAttributes();
-		FOR_EACH_VEC( vecStaticAttrs, j )
-		{
-			if ( vecStaticAttrs[j].iDefIndex != pAttrDef->GetDefinitionIndex() )
-				continue;
-
-			std::string strValue;
-			pAttrDef->GetAttributeType()->ConvertEconAttributeValueToString( pAttrDef, vecStaticAttrs[j].m_value, &strValue );
-			TFOfflineInventory().SetItemAttribute( unItemID, pAttrDef, strValue.c_str() );
-			bAnySecondColor |= ( iAttr == 1 );
-		}
-	}
-
-	// Single-color paints shouldn't keep a team color from an earlier paint job.
-	if ( !bAnySecondColor && pTintAttrs[1] )
-	{
-		TFOfflineInventory().RemoveItemAttribute( unItemID, pTintAttrs[1] );
+		Msg( "Couldn't paint that item.\n" );
+		return;
 	}
 
 	char szDisplayName[256];

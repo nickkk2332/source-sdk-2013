@@ -25,7 +25,7 @@ wearing it, like real TF2 (turn this off with `tf_respawn_on_loadoutchanges 0`).
 | Command | What it does |
 | --- | --- |
 | `inv_give <item> [quality] [effect]` | Add an item. `<item>` can be a name or part of one (`"team captain"`) or an item number. |
-| `inv_give_all [all \| weapons \| cosmetics \| taunts]` | Add one of every item you don't already have. |
+| `inv_give_all [all \| weapons \| cosmetics \| taunts \| tools]` | Add one of every item you don't already have. `tools` gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits and the like. |
 | `inv_search <text>` | Find items by name and show their numbers. |
 | `inv_list [text]` | List your items with their item IDs. |
 | `inv_effects [text]` | List unusual effects and their numbers. |
@@ -54,6 +54,34 @@ inv_give_all cosmetics
 
 Attribute names are the ones in TF2's `scripts/items/items_game.txt`. If a name
 is wrong, the command says so and changes nothing.
+
+## Tools
+
+Tools work from the backpack like in real TF2: pick the tool, then the item.
+Get a set with `inv_give_all tools`, or one at a time with `inv_give`.
+
+- **Paint cans**: paint an item (team paints too).
+- **Name Tag / Description Tag**: rename an item or give it a description. You
+  can name stock weapons too; that gives you your own copy to name.
+- **Strange parts**: add a counter to a Strange item (up to three).
+- **Strange filters**: make a counter only count on one map, e.g.
+  `inv_give "Strange Filter: Badwater"`.
+- **Strange Count Transfer Tool**: move counts from one item to another of the same kind.
+- **Strangifiers**: make the item they're for Strange.
+- **Killstreak Kits**: add a killstreak to the weapon they're for. Specialized and
+  Professional kits from `inv_give` pick their sheen (and eye effect) when used.
+- **Festivizer**: festivize a weapon.
+- **Taunt Unusualifier**: give a taunt an unusual effect.
+
+The backpack's **Restore** options work too: remove paint, names, descriptions,
+strange parts, killstreaks or festivizing, and reset strange counters. So does
+picking an item's **style**.
+
+## Strange counters
+
+Strange items count kills (and whatever their strange parts track) while you
+play, and the counts are saved with your items. Kills on bots count, which real
+TF2 doesn't do; turn that off with `inv_strange_counts_bots 0`.
 
 ## Crates
 
@@ -133,10 +161,10 @@ What's equipped is stored separately, in `game/mod_tf/cfg/local_loadout.txt`.
 
 ## Not done yet
 
-- Strange counters don't go up: kills aren't recorded anywhere yet.
-- The other in-game tools (paint cans, name tags, strange parts, crafting, the
-  store) still expect Valve's servers, so using them from the backpack does
-  nothing. Use the commands above instead for now.
-- Bonus items that need a tool to be set up first (the Taunt Unusualifier,
-  gifts) don't drop from cases yet.
+- Crafting, the Mann Co. Store, trading and gifts still expect Valve's servers,
+  so they do nothing.
+- Bonus items that need extra setup (the Taunt Unusualifier, gifts) don't drop
+  from cases yet.
+- "Your Strange item reached a new rank" messages don't appear; the rank in the
+  item's name does change.
 - Backpack "sort" does nothing yet; dragging items around does work.

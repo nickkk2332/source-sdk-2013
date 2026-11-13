@@ -129,6 +129,9 @@ void RegisterUserMessages()
 
 	usermessages->Register( "BuiltObject", 3 ); // object type, object mode (entrance vs. exit), index
 
+	// Offline inventory: a Strange counter on one of your items went up (item ID low, item ID high, attribute index, amount)
+	usermessages->Register( "OfflineKillEater", 4 + 4 + 2 + 4 );
+
 	// NVNT register haptic user messages
 	RegisterHapticMessages();
 	RegisterScriptMessages();

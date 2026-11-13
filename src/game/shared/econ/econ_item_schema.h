@@ -617,8 +617,13 @@ public:
 	const char	*GetDescO_C( void ) const				{ return !m_strDO_C.IsEmpty() ? m_strDO_C.String() : "unknown"; }
 
 	bool		IsDisabled( void ) const { return m_bDisabled; }
-	bool		RequiresAllSameClass( void ) { return m_bRequiresAllSameClass; }
-	bool		RequiresAllSameSlot( void ) { return m_bRequiresAllSameSlot; }
+	bool		RequiresAllSameClass( void ) const { return m_bRequiresAllSameClass; }
+	bool		RequiresAllSameSlot( void ) const { return m_bRequiresAllSameSlot; }
+	// Which input (index into GetInputItems()) decides the class / slot / item set of
+	// the output, or -1. Used by the offline crafting code.
+	int			GetClassUsageForOutputFromInput( void ) const { return m_iCacheClassUsageForOutputFromItem; }
+	int			GetSlotUsageForOutputFromInput( void ) const { return m_iCacheSlotUsageForOutputFromItem; }
+	int			GetSetForOutputFromInput( void ) const { return m_iCacheSetForOutputFromItem; }
 	bool		IsPremiumAccountOnly( void ) const { return m_bPremiumAccountOnly; }
 	recipecategories_t	GetCategory( void ) const { return m_iCategory; }
 	int			GetTotalInputItemsRequired( void ) const;

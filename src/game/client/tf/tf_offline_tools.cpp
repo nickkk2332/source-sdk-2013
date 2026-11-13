@@ -8,6 +8,7 @@
 #include "tf_offline_tools.h"
 #include "tf_offline_inventory.h"
 #include "tf_offline_crates.h"
+#include "tf_offline_crafting.h"
 #include "econ_gcmessages.h"
 #include "base_gcmessages.pb.h"
 #include "econ_item.h"
@@ -40,6 +41,7 @@ static bool IsHandledStructMessage( uint32 unMsgType )
 	case k_EMsgGCNameBaseItem:
 	case k_EMsgGCRemoveItemName:
 	case k_EMsgGCSetItemStyle:
+	case k_EMsgGCCraft:
 		return true;
 	}
 	return false;
@@ -574,6 +576,10 @@ static void ProcessRequest( const OfflineToolRequest_t &request )
 		}
 		break;
 	}
+
+	case k_EMsgGCCraft:
+		OfflineCrafting_ProcessCraftRequest( request.m_strBody.data(), (uint32)request.m_strBody.size() );
+		break;
 
 	case k_EMsgGCApplyStrangePart:
 	{

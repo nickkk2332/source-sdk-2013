@@ -158,6 +158,37 @@ About 25 old event crates (for example the 2010 Winter Crate and the 2013 Robo
 Crate) list contents that only ever existed on Valve's servers. Those don't
 appear in `inv_crates` and can't be opened.
 
+## Crafting
+
+Open Items, then Crafting, pick a recipe, add the items and press Craft, like in
+real TF2. The items are used up and what you made shows up as new items. Every
+recipe the game ships with works, including:
+
+- **Metal**: smelt two weapons for the same class into Scrap, 3 Scrap into
+  Reclaimed, 3 Reclaimed into Refined, and back down again.
+- **Tokens**: smelt three weapons for the same class (or same slot) into a class
+  (or slot) token.
+- **Fabricate Class Weapon**: Scrap + class token + slot token gives a random
+  weapon for that class and slot.
+- **Fabricate Headgear**: 3 Refined gives a random hat. 4 Refined + a class token
+  gives a random hat for that class.
+- **Weapon blueprints** (Pain Train, Homewrecker, Gunboats, ...), the Saxton Hale
+  mask, the Headtaker and the Strange Count Transfer Tool.
+
+The **Custom** recipe at the bottom of the Special list tries your items against
+every recipe, like it used to.
+
+When a recipe gives something random, it picks from the items the game marks as
+craftable, leaving out stock weapons, war paints, festives and other limited
+editions, promo all-class melees (Saxxy, Bat Outta Hell, ...), and Halloween-only
+cosmetics, which only show up during Halloween. Valve's exact lists only ever
+lived on their servers, so this is a close match, not an exact one.
+
+Items you can't use in crafting, as in real TF2: anything marked "Not Usable in
+Crafting", Community, Valve and Self-Made items, and weapons bought from the
+store (store-bought cosmetics are fine). Items from `inv_give`, crates and
+crafting can all be crafted.
+
 ## The save file
 
 Your items are saved to `game/mod_tf/cfg/offline_inventory.txt`. It's plain text
@@ -193,7 +224,7 @@ What's equipped is stored separately, in `game/mod_tf/cfg/local_loadout.txt`.
 
 ## Not done yet
 
-- Crafting, trading and gifts still expect Valve's servers, so they do nothing.
+- Trading and gifts still expect Valve's servers, so they do nothing.
 - The store doesn't sell map stamps, and "try it on" previews don't work.
 - Bonus items that need extra setup (the Taunt Unusualifier, gifts) don't drop
   from cases yet.

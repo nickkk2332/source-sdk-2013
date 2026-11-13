@@ -413,7 +413,9 @@ bool CTFOfflineInventory::BuildEconItem( KeyValues *pItemKV, CEconItem *pItem ) 
 	pItem->SetItemLevel( pItemKV->GetInt( "level", 1 ) );
 	pItem->SetQuality( pItemKV->GetInt( "quality", AE_UNIQUE ) );
 	pItem->SetOrigin( (eEconItemOrigin)pItemKV->GetInt( "origin", kEconItemOrigin_Drop ) );
-	pItem->SetFlags( 0 );
+	// Valve's store has tagged every purchase this way since 2012; the tag lets an item
+	// whose schema entry allows it ("can_craft_if_purchased") be used in crafting.
+	pItem->SetFlags( pItem->GetOrigin() == kEconItemOrigin_Purchased ? kEconItemFlag_PurchasedAfterStoreCraftabilityChanges2012 : 0 );
 	pItem->SetStyle( pItemKV->GetInt( "style", 0 ) );
 	int nNewReason = pItemKV->GetInt( "new_reason", UNACK_ITEM_DROPPED );
 	if ( nNewReason <= UNACK_ITEM_UNKNOWN || nNewReason >= UNACK_NUM_METHODS )

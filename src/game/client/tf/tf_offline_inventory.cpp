@@ -590,6 +590,16 @@ itemid_t CTFOfflineInventory::CreateItem( const CEconItemDefinition *pItemDef, i
 		pItemKV->AddSubKey( pAttributesCopy );
 	}
 
+	// War Paints always have a wear grade (the item server rolled one).
+	if ( OfflineTools_IsWarPaint( pItemDef ) )
+	{
+		KeyValues *pAttributesKV = pItemKV->FindKey( "attributes", true );
+		if ( !pAttributesKV->FindKey( "set_item_texture_wear" ) )
+		{
+			pAttributesKV->SetString( "set_item_texture_wear", CFmtStr( "%g", OfflineTools_RandomWear() ) );
+		}
+	}
+
 	// Strange items need a kill counter to show their rank.
 	if ( nQuality == AE_STRANGE )
 	{
@@ -836,6 +846,36 @@ bool CTFOfflineInventory::ApplyItemPosition( itemid_t unItemID, uint32 unBackend
 	UpdateLiveItem( pItemKV );
 	m_bDirty = true;
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+void CTFOfflineInventory::SetBackpackOrder( const CUtlVector< itemid_t > &vecItemIDs )
+{
+	if ( !m_bLoaded )
+		return;
+
+	BeginBulkChange();
+
+	int iSlot = 1;
+	FOR_EACH_VEC( vecItemIDs, i )
+	{
+		KeyValues *pItemKV = FindItemKV( vecItemIDs[i] );
+		if ( !pItemKV || iSlot > kOfflineBackpackSlots )
+			continue;
+
+		const int iOldSlot = SlotFromKV( pItemKV );
+		if ( iOldSlot != iSlot )
+		{
+			m_nSlotUseCount[iOldSlot]--;
+			m_nSlotUseCount[iSlot]++;
+			pItemKV->SetInt( "slot", iSlot );
+			UpdateLiveItem( pItemKV );
+			m_bDirty = true;
+		}
+		iSlot++;
+	}
+
+	EndBulkChange();
 }
 
 //-----------------------------------------------------------------------------
@@ -1341,17 +1381,197 @@ static const CEconItemAttributeDefinition *GetUnusualEffectAttribute( const CEco
 }
 
 //-----------------------------------------------------------------------------
+// Unusual effects by name
+//-----------------------------------------------------------------------------
+enum EOfflineEffectKind
+{
+	kEffectKind_Hat,
+	kEffectKind_Weapon,
+	kEffectKind_Taunt,
+	kEffectKind_Other,	// killstreak eyes, community sparkles, ...
+};
+
+// The schema groups effects by what they're for, but the game keeps only the
+// numbers, which come in clean ranges.
+static EOfflineEffectKind GetEffectKind( int iEffect )
+{
+	if ( iEffect >= 701 && iEffect <= 799 )
+		return kEffectKind_Weapon;
+	if ( iEffect >= 3000 && iEffect <= 3999 )
+		return kEffectKind_Taunt;
+	if ( iEffect <= 5 || ( iEffect >= 2000 && iEffect <= 2999 ) || iEffect >= 20000 )
+		return kEffectKind_Other;
+	return kEffectKind_Hat;
+}
+
+static const char *GetEffectKindName( EOfflineEffectKind eKind )
+{
+	switch ( eKind )
+	{
+	case kEffectKind_Hat:		return "hat";
+	case kEffectKind_Weapon:	return "weapon";
+	case kEffectKind_Taunt:		return "taunt";
+	default:					return "other";
+	}
+}
+
+static EOfflineEffectKind GetEffectKindForItem( const CEconItemDefinition *pItemDef )
+{
+	switch ( pItemDef ? OfflineInventory_GetItemCategory( pItemDef ) : kCategory_None )
+	{
+	case kCategory_Weapon:	return kEffectKind_Weapon;
+	case kCategory_Taunt:	return kEffectKind_Taunt;
+	default:				return kEffectKind_Hat;
+	}
+}
+
+static void GetEffectName( int iEffect, const char *pszSystemName, char *pszOut, int nOutSize )
+{
+	const locchar_t *pszLocalized = GLocalizationProvider()->Find( CFmtStr( "#Attrib_Particle%d", iEffect ) );
+	if ( pszLocalized )
+	{
+		GLocalizationProvider()->ConvertLoccharToANSI( pszLocalized, pszOut, nOutSize );
+	}
+	else
+	{
+		V_strncpy( pszOut, pszSystemName ? pszSystemName : "?", nOutSize );
+	}
+}
+
+// Lower case, letters and digits only, so "Sunbeams", "sun beams" and "SUNBEAMS!" match.
+static void SimplifyEffectName( const char *pszIn, char *pszOut, int nOutSize )
+{
+	int n = 0;
+	for ( const char *p = pszIn; *p && n < nOutSize - 1; ++p )
+	{
+		if ( isalnum( (unsigned char)*p ) )
+		{
+			pszOut[n++] = (char)tolower( (unsigned char)*p );
+		}
+	}
+	pszOut[n] = '\0';
+}
+
+bool OfflineInventory_ParseUnusualEffect( const char *pszText, const CEconItemDefinition *pItemDef, int *piEffect )
+{
+	if ( !pszText || !pszText[0] )
+		return false;
+
+	const CEconItemSchema::ParticleDefinitionMap_t &mapParticles = GetItemSchema()->GetAttributeControlledParticleSystems();
+	const EOfflineEffectKind eWantedKind = GetEffectKindForItem( pItemDef );
+
+	if ( IsAllDigits( pszText ) )
+	{
+		*piEffect = V_atoi( pszText );
+		if ( mapParticles.Find( *piEffect ) == mapParticles.InvalidIndex() )
+		{
+			Msg( "There's no unusual effect %d. See inv_effects.\n", *piEffect );
+			return false;
+		}
+		return true;
+	}
+
+	if ( !V_stricmp( pszText, "random" ) )
+	{
+		CUtlVector< int > vecEffects;
+		FOR_EACH_MAP( mapParticles, i )
+		{
+			const int iEffect = mapParticles.Key( i );
+			if ( GetEffectKind( iEffect ) == eWantedKind && GLocalizationProvider()->Find( CFmtStr( "#Attrib_Particle%d", iEffect ) ) )
+			{
+				vecEffects.AddToTail( iEffect );
+			}
+		}
+		if ( vecEffects.Count() == 0 )
+			return false;
+		*piEffect = vecEffects[ RandomInt( 0, vecEffects.Count() - 1 ) ];
+		return true;
+	}
+
+	char szWanted[256];
+	SimplifyEffectName( pszText, szWanted, sizeof( szWanted ) );
+	if ( !szWanted[0] )
+		return false;
+
+	// Exact names first, then names containing the text; effects for this kind
+	// of item win over the rest.
+	CUtlVector< int > vecExact, vecExactKind, vecPartial, vecPartialKind;
+	char szName[256], szSimple[256];
+	FOR_EACH_MAP( mapParticles, i )
+	{
+		const int iEffect = mapParticles.Key( i );
+		GetEffectName( iEffect, mapParticles[i].pszSystemName, szName, sizeof( szName ) );
+		SimplifyEffectName( szName, szSimple, sizeof( szSimple ) );
+
+		const bool bKind = GetEffectKind( iEffect ) == eWantedKind;
+		if ( !V_strcmp( szSimple, szWanted ) )
+		{
+			( bKind ? vecExactKind : vecExact ).AddToTail( iEffect );
+		}
+		else if ( V_strstr( szSimple, szWanted ) )
+		{
+			( bKind ? vecPartialKind : vecPartial ).AddToTail( iEffect );
+		}
+	}
+
+	const CUtlVector< int > *pMatches = vecExactKind.Count() ? &vecExactKind
+									  : vecExact.Count() ? &vecExact
+									  : vecPartialKind.Count() ? &vecPartialKind
+									  : &vecPartial;
+	if ( pMatches->Count() == 1 )
+	{
+		*piEffect = (*pMatches)[0];
+		return true;
+	}
+
+	if ( pMatches->Count() == 0 )
+	{
+		Msg( "No unusual effect called \"%s\". See inv_effects.\n", pszText );
+		return false;
+	}
+
+	Msg( "\"%s\" matches %d effects; be more specific:\n", pszText, pMatches->Count() );
+	FOR_EACH_VEC( *pMatches, i )
+	{
+		if ( i >= 25 )
+		{
+			Msg( "  ... and %d more.\n", pMatches->Count() - i );
+			break;
+		}
+		const int iEffect = (*pMatches)[i];
+		const int iParticle = mapParticles.Find( iEffect );
+		GetEffectName( iEffect, iParticle != mapParticles.InvalidIndex() ? mapParticles[iParticle].pszSystemName : NULL, szName, sizeof( szName ) );
+		Msg( "  %5d  %s (%s)\n", iEffect, szName, GetEffectKindName( GetEffectKind( iEffect ) ) );
+	}
+	return false;
+}
+
+// Joins the arguments from iFirst on with spaces, so names work with or without quotes.
+static void JoinArgs( const CCommand &args, int iFirst, char *pszOut, int nOutSize )
+{
+	pszOut[0] = '\0';
+	for ( int i = iFirst; i < args.ArgC(); ++i )
+	{
+		if ( i > iFirst )
+		{
+			V_strncat( pszOut, " ", nOutSize );
+		}
+		V_strncat( pszOut, args[i], nOutSize );
+	}
+}
+
+//-----------------------------------------------------------------------------
 CON_COMMAND( inv_give, "Add an item to your offline backpack.\n"
-	"  Usage: inv_give <item name or number> [quality] [unusual effect number]\n"
+	"  Usage: inv_give <item name or number> [quality] [unusual effect name or number]\n"
 	"  Qualities: normal genuine vintage unusual unique community valve selfmade strange haunted collectors decorated\n"
-	"  Example: inv_give \"Team Captain\" unusual 13" )
+	"  Example: inv_give \"Team Captain\" unusual \"Burning Flames\"" )
 {
 	if ( !CheckInventoryReady() )
 		return;
 
 	if ( args.ArgC() < 2 )
 	{
-		Msg( "Usage: inv_give <item name or number> [quality] [unusual effect number]\n" );
+		Msg( "Usage: inv_give <item name or number> [quality] [unusual effect name or number]\n" );
 		return;
 	}
 
@@ -1395,10 +1615,15 @@ CON_COMMAND( inv_give, "Add an item to your offline backpack.\n"
 
 	if ( args.ArgC() >= 4 )
 	{
+		char szEffect[256];
+		JoinArgs( args, 3, szEffect, sizeof( szEffect ) );
+
+		int iEffect = 0;
 		const CEconItemAttributeDefinition *pEffectAttr = GetUnusualEffectAttribute( pItemDef );
-		if ( !pEffectAttr || !TFOfflineInventory().SetItemAttribute( unItemID, pEffectAttr, args[3] ) )
+		if ( !OfflineInventory_ParseUnusualEffect( szEffect, pItemDef, &iEffect )
+			|| !pEffectAttr || !TFOfflineInventory().SetItemAttribute( unItemID, pEffectAttr, CFmtStr( "%d", iEffect ) ) )
 		{
-			Msg( "Couldn't apply unusual effect \"%s\".\n", args[3] );
+			Msg( "Couldn't apply unusual effect \"%s\".\n", szEffect );
 		}
 	}
 
@@ -1416,6 +1641,9 @@ static bool IsUsableOfflineTool( const CEconItemDefinition *pItemDef )
 		"paint_can", "name", "desc", "strange_part", "strange_count_transfer",
 		"strangifier", "killstreakifier", "paintkit_weapon_festivizer", "unusualifier",
 	};
+
+	if ( OfflineTools_IsWarPaint( pItemDef ) )
+		return true;
 
 	const IEconTool *pTool = pItemDef->GetEconTool();
 	if ( !pTool || !pTool->GetTypeName() )
@@ -1585,7 +1813,7 @@ CON_COMMAND( inv_list, "List the items in your offline backpack, with their item
 
 //-----------------------------------------------------------------------------
 CON_COMMAND( inv_effects, "List unusual effects and their numbers.\n"
-	"  Usage: inv_effects [text to filter by]" )
+	"  Usage: inv_effects [text to filter by, or hat / weapon / taunt]" )
 {
 	const char *pszFilter = args.ArgC() >= 2 ? args.ArgS() : NULL;
 	char szName[256];
@@ -1604,11 +1832,116 @@ CON_COMMAND( inv_effects, "List unusual effects and their numbers.\n"
 			V_strncpy( szName, mapParticles[i].pszSystemName ? mapParticles[i].pszSystemName : "?", sizeof( szName ) );
 		}
 
-		if ( pszFilter && !V_stristr( szName, pszFilter ) )
+		if ( pszFilter && !V_stristr( szName, pszFilter ) && !V_stristr( GetEffectKindName( GetEffectKind( iEffect ) ), pszFilter ) )
 			continue;
 
-		Msg( "  %5d  %s\n", iEffect, szName );
+		Msg( "  %5d  %s (%s)\n", iEffect, szName, GetEffectKindName( GetEffectKind( iEffect ) ) );
 	}
+}
+
+//-----------------------------------------------------------------------------
+// Tab completion for inv_unusual: "inv_unusual last bur" -> the effects whose
+// names start with "bur".
+static int InvUnusualCompletion( const char *pszPartial, char commands[ COMMAND_COMPLETION_MAXITEMS ][ COMMAND_COMPLETION_ITEM_LENGTH ] )
+{
+	// Command name, then the item, then the effect typed so far.
+	const char *pszItem = V_strstr( pszPartial, " " );
+	if ( !pszItem )
+		return 0;
+	while ( *pszItem == ' ' )
+	{
+		++pszItem;
+	}
+	const char *pszEffect = V_strstr( pszItem, " " );
+	if ( !pszEffect )
+		return 0;
+
+	char szPrefix[ COMMAND_COMPLETION_ITEM_LENGTH ];
+	V_strncpy( szPrefix, pszPartial, MIN( (int)sizeof( szPrefix ), (int)( pszEffect - pszPartial ) + 2 ) );
+	while ( *pszEffect == ' ' )
+	{
+		++pszEffect;
+	}
+
+	int nCount = 0;
+	char szName[256];
+	const CEconItemSchema::ParticleDefinitionMap_t &mapParticles = GetItemSchema()->GetAttributeControlledParticleSystems();
+	FOR_EACH_MAP( mapParticles, i )
+	{
+		if ( nCount >= COMMAND_COMPLETION_MAXITEMS )
+			break;
+
+		const int iEffect = mapParticles.Key( i );
+		if ( !GLocalizationProvider()->Find( CFmtStr( "#Attrib_Particle%d", iEffect ) ) )
+			continue;
+
+		GetEffectName( iEffect, mapParticles[i].pszSystemName, szName, sizeof( szName ) );
+		if ( V_strnicmp( szName, pszEffect, V_strlen( pszEffect ) ) )
+			continue;
+
+		V_snprintf( commands[nCount++], COMMAND_COMPLETION_ITEM_LENGTH, "%s%s", szPrefix, szName );
+	}
+	return nCount;
+}
+
+CON_COMMAND_F_COMPLETION( inv_unusual, "Give an item an unusual effect (and make it Unusual), by name or number.\n"
+	"  Usage: inv_unusual <item ID | last> <effect name | number | random | none>\n"
+	"  Example: inv_unusual last Burning Flames   (Tab completes effect names)", 0, InvUnusualCompletion )
+{
+	static const char s_szUsage[] = "Usage: inv_unusual <item ID | last> <effect name | number | random | none>\n";
+	if ( !CheckInventoryReady() )
+		return;
+	if ( args.ArgC() < 3 )
+	{
+		Msg( "%s", s_szUsage );
+		return;
+	}
+
+	const itemid_t unItemID = OfflineInventory_ParseExistingItemID( args[1] );
+	if ( unItemID == INVALID_ITEM_ID )
+		return;
+
+	const CEconItemDefinition *pItemDef = TFOfflineInventory().GetItemDef( unItemID );
+	const CEconItemAttributeDefinition *pEffectAttr = pItemDef ? GetUnusualEffectAttribute( pItemDef ) : NULL;
+	const CEconItem *pItem = TFOfflineInventory().GetLiveItem( unItemID );
+	if ( !pEffectAttr || !pItem )
+		return;
+
+	char szEffect[256];
+	JoinArgs( args, 2, szEffect, sizeof( szEffect ) );
+
+	char szItemName[256];
+	OfflineInventory_GetItemDefDisplayName( pItemDef, szItemName, sizeof( szItemName ) );
+
+	if ( !V_stricmp( szEffect, "none" ) )
+	{
+		TFOfflineInventory().RemoveItemAttribute( unItemID, pEffectAttr );
+		if ( pItem->GetQuality() == AE_UNUSUAL )
+		{
+			TFOfflineInventory().SetItemQuality( unItemID, BIsItemStrange( pItem ) ? AE_STRANGE : AE_UNIQUE );
+		}
+		Msg( "Removed the unusual effect from %s.\n", szItemName );
+		return;
+	}
+
+	int iEffect = 0;
+	if ( !OfflineInventory_ParseUnusualEffect( szEffect, pItemDef, &iEffect ) )
+		return;
+
+	if ( !TFOfflineInventory().SetItemAttribute( unItemID, pEffectAttr, CFmtStr( "%d", iEffect ) ) )
+		return;
+
+	// Unusual quality (a Strange item keeps its kill counter: "Strange Unusual").
+	if ( pItem->GetQuality() != AE_UNUSUAL )
+	{
+		TFOfflineInventory().SetItemQuality( unItemID, AE_UNUSUAL );
+	}
+
+	char szName[256];
+	const CEconItemSchema::ParticleDefinitionMap_t &mapParticles = GetItemSchema()->GetAttributeControlledParticleSystems();
+	const int iParticle = mapParticles.Find( iEffect );
+	GetEffectName( iEffect, iParticle != mapParticles.InvalidIndex() ? mapParticles[iParticle].pszSystemName : NULL, szName, sizeof( szName ) );
+	Msg( "%s now has %s (%d).\n", szItemName, szName, iEffect );
 }
 
 //-----------------------------------------------------------------------------

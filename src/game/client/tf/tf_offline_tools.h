@@ -41,4 +41,12 @@ void OfflineTools_ProcessPendingRequests();
 // Copies a paint can's colors onto an item. Used by the paint can tool and inv_paint.
 bool OfflineTools_PaintItem( itemid_t unItemID, const CEconItemDefinition *pPaintCanDef );
 
+// War Paints: the paint "canvas" tools you use on a weapon type.
+bool		OfflineTools_IsWarPaint( const CEconItemDefinition *pItemDef );
+// Wear grades, as the "set_item_texture_wear" value: 0.2 Factory New ... 1.0 Battle Scarred.
+float		OfflineTools_RandomWear();
+// Accepts "fn", "factory new", "factory_new", 0.2, ..., or "random".
+bool		OfflineTools_ParseWear( const char *pszText, float *pflWear );
+const char	*OfflineTools_GetWearName( float flWear );
+
 #endif // TF_OFFLINE_TOOLS_H

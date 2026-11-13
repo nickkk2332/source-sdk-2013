@@ -7,6 +7,8 @@
 #include "cbase.h"
 #include "tf_offline_crafting.h"
 #include "tf_offline_inventory.h"
+#include "tf_offline_crates.h"
+#include "tf_offline_tools.h"
 #include "econ_gcmessages.h"
 #include "econ_item.h"
 #include "econ_item_schema.h"
@@ -246,8 +248,8 @@ static bool FitsCraftParams( const CTFItemDefinition *pItemDef, const OfflineCra
 //-----------------------------------------------------------------------------
 // Purpose: The schema marks more items as craftable than the item servers ever
 //			handed out from a random recipe. Leave out the odd ones: stock
-//			weapons, war paints, festives and other limited editions, promo
-//			all-class melees, and items that only show during a holiday.
+//			weapons, war paints, festives and other limited editions, and promo
+//			all-class melees.
 //-----------------------------------------------------------------------------
 static bool IsGoodRandomCraftResult( const CTFItemDefinition *pItemDef )
 {
@@ -255,10 +257,6 @@ static bool IsGoodRandomCraftResult( const CTFItemDefinition *pItemDef )
 		return false;
 
 	if ( !V_strnicmp( pItemDef->GetDefinitionName(), "Upgradeable ", 12 ) )
-		return false;
-
-	const char *pszHoliday = pItemDef->GetHolidayRestriction();
-	if ( pszHoliday && pszHoliday[0] )
 		return false;
 
 	const char *pszItemClass = pItemDef->GetItemClass();
@@ -458,4 +456,147 @@ void OfflineCrafting_ProcessCraftRequest( const void *pBody, uint32 cubBody )
 	TFOfflineInventory().EndBulkChange();
 
 	SendCraftResponse( vecNewItems.Count() ? k_EGCMsgResponseOK : k_EGCMsgResponseUnknownError, vecNewItems, pRecipe->GetDefinitionIndex() );
+}
+
+//-----------------------------------------------------------------------------
+// Mann Co. Trade-Ups
+//-----------------------------------------------------------------------------
+
+// Checks the items with the game's own rules (the same ones the trade-up window
+// uses to decide what you can pick). Returns false if any fails.
+static bool GetTradeUpItems( const CUtlVector< itemid_t > &vecItemIDs, int nRequired,
+							 const char *( *pfnInvalidReason )( const IEconItemInterface *, const IEconItemInterface * ),
+							 CUtlVector< const CEconItem * > &vecItems )
+{
+	if ( vecItemIDs.Count() != nRequired )
+	{
+		Warning( "Offline trade-up: needs %d items, got %d.\n", nRequired, vecItemIDs.Count() );
+		return false;
+	}
+
+	FOR_EACH_VEC( vecItemIDs, i )
+	{
+		const CEconItem *pItem = TFOfflineInventory().GetLiveItem( vecItemIDs[i] );
+		if ( !pItem || vecItems.HasElement( pItem ) )
+		{
+			Warning( "Offline trade-up: an item isn't in your backpack any more.\n" );
+			return false;
+		}
+
+		const char *pszReason = pfnInvalidReason( pItem, vecItems.Count() ? vecItems[0] : NULL );
+		if ( pszReason )
+		{
+			char szReason[256];
+			const locchar_t *pszLocalized = GLocalizationProvider()->Find( pszReason );
+			if ( pszLocalized )
+			{
+				GLocalizationProvider()->ConvertLoccharToANSI( pszLocalized, szReason, sizeof( szReason ) );
+			}
+			else
+			{
+				V_strncpy( szReason, pszReason, sizeof( szReason ) );
+			}
+			Warning( "Offline trade-up: %s\n", szReason );
+			return false;
+		}
+
+		vecItems.AddToTail( pItem );
+	}
+	return true;
+}
+
+static void UseUpItems( const CUtlVector< const CEconItem * > &vecItems )
+{
+	CUtlVector< itemid_t > vecIDs;
+	FOR_EACH_VEC( vecItems, i )
+	{
+		vecIDs.AddToTail( vecItems[i]->GetItemID() );
+	}
+	FOR_EACH_VEC( vecIDs, i )
+	{
+		TFOfflineInventory().DeleteItem( vecIDs[i] );
+	}
+}
+
+void OfflineCrafting_TradeUp( const CUtlVector< itemid_t > &vecItemIDs )
+{
+	CUtlVector< const CEconItem * > vecItems;
+	if ( !GetTradeUpItems( vecItemIDs, COLLECTION_CRAFTING_ITEM_COUNT, &GetCollectionCraftingInvalidReason, vecItems ) )
+		return;	// the trade-up window gives up after a few seconds
+
+	const bool bStrange = BIsItemStrange( vecItems[0] );
+	const uint8 unNextRarity = vecItems[0]->GetRarity() + 1;
+
+	// One of the items, picked at random, decides the collection: the more items
+	// from a collection, the likelier its items are.
+	CUtlVector< const CEconItem * > vecShuffled;
+	vecShuffled.AddVectorToTail( vecItems );
+	const CEconItemDefinition *pResultDef = NULL;
+	while ( vecShuffled.Count() && !pResultDef )
+	{
+		const int iPick = RandomInt( 0, vecShuffled.Count() - 1 );
+		const CEconItemDefinition *pPickedDef = vecShuffled[iPick]->GetItemDefinition();
+		vecShuffled.FastRemove( iPick );
+
+		const CEconItemCollectionDefinition *pCollection = pPickedDef ? pPickedDef->GetItemCollectionDefinition() : NULL;
+		if ( !pCollection )
+			continue;
+
+		CUtlVector< const CEconItemDefinition * > vecCandidates;
+		FOR_EACH_VEC( pCollection->m_iItemDefs, j )
+		{
+			const CEconItemDefinition *pDef = GetItemSchema()->GetItemDefinition( pCollection->m_iItemDefs[j] );
+			if ( pDef && pDef->GetRarity() == unNextRarity )
+			{
+				vecCandidates.AddToTail( pDef );
+			}
+		}
+		if ( vecCandidates.Count() )
+		{
+			pResultDef = vecCandidates[ RandomInt( 0, vecCandidates.Count() - 1 ) ];
+		}
+	}
+
+	if ( !pResultDef )
+	{
+		Warning( "Offline trade-up: those collections have nothing of the next grade.\n" );
+		return;
+	}
+
+	// Painted results get a fresh wear grade, like the ones from cases.
+	KeyValuesAD pAttributes( "attributes" );
+	CUtlString strPaintKit;
+	if ( OfflineCrates_GetStaticAttribValue( pResultDef, "paintkit_proto_def_index", strPaintKit ) )
+	{
+		pAttributes->SetString( "set_item_texture_wear", CFmtStr( "%g", OfflineTools_RandomWear() ) );
+	}
+
+	UseUpItems( vecItems );
+
+	const itemid_t unNewItemID = TFOfflineInventory().CreateItem( pResultDef, bStrange ? AE_STRANGE : -1, pAttributes,
+																  kEconItemOrigin_TradeUp, UNACK_ITEM_TRADE_UP );
+	if ( unNewItemID != INVALID_ITEM_ID )
+	{
+		char szName[256];
+		OfflineInventory_GetItemDefDisplayName( pResultDef, szName, sizeof( szName ) );
+		Msg( "Trade-up: got %s%s.\n", bStrange ? "Strange " : "", szName );
+	}
+}
+
+void OfflineCrafting_CraftStatClock( const CUtlVector< itemid_t > &vecItemIDs )
+{
+	CUtlVector< const CEconItem * > vecItems;
+	if ( !GetTradeUpItems( vecItemIDs, CRAFT_COMMON_STATCLOCK_ITEM_COUNT, &GetCraftCommonStatClockInvalidReason, vecItems ) )
+		return;
+
+	const CEconItemDefinition *pStatClockDef = GetItemSchema()->GetItemDefinitionByName( "Common Stat Clock" );
+	if ( !pStatClockDef )
+		return;
+
+	UseUpItems( vecItems );
+
+	if ( TFOfflineInventory().CreateItem( pStatClockDef, AE_UNIQUE, NULL, kEconItemOrigin_TradeUp, UNACK_ITEM_TRADE_UP ) != INVALID_ITEM_ID )
+	{
+		Msg( "Trade-up: got a Common Stat Clock.\n" );
+	}
 }

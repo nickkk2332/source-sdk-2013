@@ -25,6 +25,7 @@
 
 #include "cbase.h"
 #include "tf_offline_crates.h"
+#include "tf_offline_tools.h"
 #include "tf_offline_inventory.h"
 #include "econ_item.h"
 #include "econ_item_schema.h"
@@ -43,6 +44,61 @@ ConVar inv_crate_strange_chance( "inv_crate_strange_chance", "0.1", FCVAR_ARCHIV
 	"Offline inventory: chance (0 to 1) that an item from a case comes out Strange." );
 ConVar inv_crate_bonus_chance( "inv_crate_bonus_chance", "0.05", FCVAR_ARCHIVE,
 	"Offline inventory: chance (0 to 1) of each possible bonus item (paint, tools, strange parts, ...) from a case." );
+
+ConVar inv_crate_force_unusual( "inv_crate_force_unusual", "0", FCVAR_ARCHIVE,
+	"Offline inventory: 1 = every crate that can give an Unusual gives one." );
+ConVar inv_crate_force_strange( "inv_crate_force_strange", "0", FCVAR_ARCHIVE,
+	"Offline inventory: 1 = every case that can give a Strange item gives one." );
+ConVar inv_crate_force_grade( "inv_crate_force_grade", "", FCVAR_ARCHIVE,
+	"Offline inventory: always get this grade from cases: elite, assassin, commando, mercenary, freelance, civilian, or best. Empty = normal odds." );
+ConVar inv_crate_force_wear( "inv_crate_force_wear", "", FCVAR_ARCHIVE,
+	"Offline inventory: wear for war paints from cases: fn, mw, ft, ww, bs. Empty = random." );
+
+static float GetUnusualChance()
+{
+	return inv_crate_force_unusual.GetBool() ? 1.f : inv_crate_unusual_chance.GetFloat();
+}
+
+static float GetStrangeChance()
+{
+	return inv_crate_force_strange.GetBool() ? 1.f : inv_crate_strange_chance.GetFloat();
+}
+
+static const int kForcedGradeBest = 99;
+
+// The grade inv_crate_force_grade asks for, as a rarity (1 Civilian ... 6 Elite), 0 for none.
+static int GetForcedGrade()
+{
+	static const struct
+	{
+		const char	*m_pszGrade;
+		const char	*m_pszRarity;
+		int			m_nRarity;
+	} s_Grades[] =
+	{
+		{ "civilian",	"common",		1 },
+		{ "freelance",	"uncommon",		2 },
+		{ "mercenary",	"rare",			3 },
+		{ "commando",	"mythical",		4 },
+		{ "assassin",	"legendary",	5 },
+		{ "elite",		"ancient",		6 },
+	};
+
+	const char *pszGrade = inv_crate_force_grade.GetString();
+	if ( !pszGrade || !pszGrade[0] || !V_stricmp( pszGrade, "none" ) || !V_stricmp( pszGrade, "0" ) )
+		return 0;
+	if ( !V_stricmp( pszGrade, "best" ) || !V_stricmp( pszGrade, "top" ) )
+		return kForcedGradeBest;
+
+	for ( int i = 0; i < ARRAYSIZE( s_Grades ); ++i )
+	{
+		if ( !V_stricmp( pszGrade, s_Grades[i].m_pszGrade ) || !V_stricmp( pszGrade, s_Grades[i].m_pszRarity ) )
+			return s_Grades[i].m_nRarity;
+	}
+
+	const int nRarity = V_atoi( pszGrade );
+	return ( nRarity >= 1 && nRarity <= 6 ) ? nRarity : 0;
+}
 
 static const int kMaxLootListDepth = 16;
 static const int kMaxBonusDepth = 4;
@@ -249,9 +305,44 @@ static const CEconItemDefinition *RollLootList( const CEconLootListDefinition *p
 
 	const CUtlVector< drop_item_t > &vecContents = pLootList->GetLootListContents();
 	CUtlVector< float > vecWeights;
+	CUtlVector< uint8 > vecTiers;
 	FOR_EACH_VEC( vecContents, i )
 	{
 		vecWeights.AddToTail( GetLootListEntryWeight( vecContents[i] ) );
+
+		const int iID = vecContents[i].m_iItemOrLootlistDef;
+		const CEconLootListDefinition *pNestedList = iID < 0 ? GetItemSchema()->GetLootListByIndex( -iID - 1 ) : NULL;
+		vecTiers.AddToTail( pNestedList ? GetRarityTierOfNestedList( pNestedList ) : k_unItemRarity_Any );
+	}
+
+	// inv_crate_force_grade: keep only the asked-for grade, or the best one
+	// below it that this case has (or its lowest, if they're all above).
+	const int nForcedGrade = GetForcedGrade();
+	if ( nForcedGrade > 0 )
+	{
+		int nBestAtOrBelow = 0, nLowest = 0;
+		FOR_EACH_VEC( vecTiers, i )
+		{
+			const int nTier = ( vecTiers[i] == k_unItemRarity_Any || vecWeights[i] <= 0.f ) ? 0 : vecTiers[i];
+			if ( !nTier )
+				continue;
+			if ( nTier <= nForcedGrade && nTier > nBestAtOrBelow )
+				nBestAtOrBelow = nTier;
+			if ( !nLowest || nTier < nLowest )
+				nLowest = nTier;
+		}
+
+		const int nKeep = nBestAtOrBelow ? nBestAtOrBelow : nLowest;
+		if ( nKeep )
+		{
+			FOR_EACH_VEC( vecTiers, i )
+			{
+				if ( vecTiers[i] != k_unItemRarity_Any && vecTiers[i] != nKeep )
+				{
+					vecWeights[i] = 0.f;
+				}
+			}
+		}
 	}
 
 	const int iPicked = PickWeighted( vecWeights );
@@ -324,6 +415,14 @@ static bool JobAddsUnusualEffect( const CLootlistJob *pJob )
 
 static float GetJobChance( const CLootlistJob *pJob )
 {
+	const char *pszTemplateName = pJob->GetTemplateName();
+
+	// Forced results win over everything.
+	if ( inv_crate_force_unusual.GetBool() && JobAddsUnusualEffect( pJob ) )
+		return 1.f;
+	if ( inv_crate_force_strange.GetBool() && pszTemplateName && V_stristr( pszTemplateName, "strange_quality_chance" ) )
+		return 1.f;
+
 	// Use real odds if the schema has them.
 	if ( pJob->GetChanceToRunJob() > 0.f )
 		return pJob->GetChanceToRunJob();
@@ -332,14 +431,13 @@ static float GetJobChance( const CLootlistJob *pJob )
 	if ( pJob->GetAdditionalDrops().Count() > 0 )
 		return inv_crate_bonus_chance.GetFloat();
 
-	const char *pszTemplateName = pJob->GetTemplateName();
 	if ( pszTemplateName && V_stristr( pszTemplateName, "guaranteed" ) )
 		return 1.f;
 	if ( pszTemplateName && V_stristr( pszTemplateName, "strange_quality_chance" ) )
-		return inv_crate_strange_chance.GetFloat();
+		return GetStrangeChance();
 
 	if ( JobAddsUnusualEffect( pJob ) )
-		return inv_crate_unusual_chance.GetFloat();
+		return GetUnusualChance();
 
 	// Everything else (kill counters on Strange-only lists, killstreak sheens,
 	// war paint wear, ...) is part of what the item is, so it always happens.
@@ -644,7 +742,7 @@ bool OfflineCrates_RollCrate( const IEconItemInterface *pCrate, CUtlVector< COff
 
 	const char *pszClassicTemplate = pLootList ? GetClassicUnusualEffectTemplate( pLootList->GetLootListFooterLocalizationKey() ) : NULL;
 	const bool bClassicUnusual = pszClassicTemplate
-		&& RollChance( inv_crate_unusual_chance.GetFloat() )
+		&& RollChance( GetUnusualChance() )
 		&& RollClassicUnusual( pszClassicTemplate, pMainItem );
 
 	if ( !bClassicUnusual )
@@ -673,6 +771,21 @@ bool OfflineCrates_RollCrate( const IEconItemInterface *pCrate, CUtlVector< COff
 
 	vecOut.AddToTail( pMainItem );
 	vecOut.AddVectorToTail( vecBonusItems );
+
+	// inv_crate_force_wear: painted items come out at that wear.
+	float flForcedWear = 0.f;
+	if ( inv_crate_force_wear.GetString()[0] && V_stricmp( inv_crate_force_wear.GetString(), "random" )
+		&& OfflineTools_ParseWear( inv_crate_force_wear.GetString(), &flForcedWear ) )
+	{
+		FOR_EACH_VEC( vecOut, i )
+		{
+			COfflineLootItem *pItem = vecOut[i];
+			if ( pItem->m_pItemDef && ( pItem->HasAttribute( "set_item_texture_wear" ) || FindStaticAttrib( pItem->m_pItemDef, "paintkit_proto_def_index" ) ) )
+			{
+				pItem->SetAttribute( "set_item_texture_wear", CFmtStr( "%g", flForcedWear ) );
+			}
+		}
+	}
 	return true;
 }
 
@@ -986,4 +1099,34 @@ bool OfflineCrates_HasKnownContents( const CEconItemDefinition *pCrateDef )
 	CUtlString strLootList;
 	return OfflineCrates_GetStaticAttribValue( pCrateDef, "loot list name", strLootList )
 		&& GetItemSchema()->GetLootListByName( strLootList.Get() ) != NULL;
+}
+
+//-----------------------------------------------------------------------------
+CON_COMMAND( inv_crate_luck, "Set every crate odds setting at once.\n"
+	"  Usage: inv_crate_luck <normal | jackpot>\n"
+	"  jackpot: always Unusual (where a crate can give one), always Strange, the best grade, Factory New.\n"
+	"  normal: back to the usual odds." )
+{
+	const char *pszMode = args.ArgC() >= 2 ? args[1] : "";
+	if ( !V_stricmp( pszMode, "jackpot" ) )
+	{
+		inv_crate_force_unusual.SetValue( 1 );
+		inv_crate_force_strange.SetValue( 1 );
+		inv_crate_force_grade.SetValue( "best" );
+		inv_crate_force_wear.SetValue( "fn" );
+		Msg( "Jackpot: every crate gives its best. inv_crate_luck normal undoes this.\n" );
+	}
+	else if ( !V_stricmp( pszMode, "normal" ) )
+	{
+		inv_crate_force_unusual.SetValue( 0 );
+		inv_crate_force_strange.SetValue( 0 );
+		inv_crate_force_grade.SetValue( "" );
+		inv_crate_force_wear.SetValue( "" );
+		Msg( "Crates are back to the normal odds (inv_crate_unusual_chance %.3g, inv_crate_strange_chance %.3g).\n",
+			 inv_crate_unusual_chance.GetFloat(), inv_crate_strange_chance.GetFloat() );
+	}
+	else
+	{
+		Msg( "Usage: inv_crate_luck <normal | jackpot>\n" );
+	}
 }

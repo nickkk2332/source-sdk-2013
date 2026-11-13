@@ -18,6 +18,7 @@
 
 #include "cbase.h"
 #include "tf_offline_store.h"
+#include "tf_offline_tools.h"
 #include "tf_offline_inventory.h"
 #include "tf_offline_crates.h"
 #include "econ_item_schema.h"
@@ -118,6 +119,9 @@ static int GetDefaultPrice( const CEconItemDefinition *pItemDef, const char **pp
 	if ( pTool || pItemDef->IsTool() )
 	{
 		*ppszCategory = "Tools";
+		// War Paints (each comes with a random wear grade).
+		if ( pTool && pTool->GetTypeName() && !V_stricmp( pTool->GetTypeName(), "paintkit" ) )
+			return OfflineTools_IsWarPaint( pItemDef ) ? 299 : 0;
 		return ( pTool && pTool->GetTypeName() ) ? GetToolPrice( pTool->GetTypeName() ) : 0;
 	}
 

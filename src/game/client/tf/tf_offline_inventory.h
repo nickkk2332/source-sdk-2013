@@ -87,6 +87,8 @@ public:
 
 	// Called when the backpack UI moves an item (or acknowledges a new one).
 	bool		SetItemPosition( itemid_t unItemID, uint32 unBackendPosition );
+	// Puts these items in backpack slots 1, 2, 3, ... in this order (backpack sort).
+	void		SetBackpackOrder( const CUtlVector< itemid_t > &vecItemIDs );
 
 	// Wrap many changes in these to rebuild the live backpack once at the end
 	// instead of once per item (e.g. giving thousands of items at once).
@@ -168,5 +170,9 @@ EOfflineItemCategory OfflineInventory_GetItemCategory( const CEconItemDefinition
 void		OfflineInventory_GetItemDefDisplayName( const CEconItemDefinition *pItemDef, char *pszOut, int nOutSize );
 void		OfflineInventory_FindItemDefs( const char *pszQuery, CUtlVector< const CEconItemDefinition * > &vecOut );
 itemid_t	OfflineInventory_ParseExistingItemID( const char *pszArg );	// prints why on failure
+// Finds an unusual effect by number, name or part of a name ("burning", "Sunbeams").
+// pItemDef (may be NULL) prefers effects made for that kind of item (hat, weapon, taunt);
+// "random" picks one that suits it. Prints the choices if the text is ambiguous.
+bool		OfflineInventory_ParseUnusualEffect( const char *pszText, const CEconItemDefinition *pItemDef, int *piEffect );
 
 #endif // TF_OFFLINE_INVENTORY_H

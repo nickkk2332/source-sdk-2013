@@ -41,15 +41,21 @@ You can still build it yourself as described in the main README.
 Changing your loadout while standing in your team's spawn room respawns you
 wearing it, like real TF2 (turn this off with `tf_respawn_on_loadoutchanges 0`).
 
+Halloween (and other holiday-only) cosmetics work all year: you can equip them
+and they show up any time, no Halloween mode needed.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `inv_give <item> [quality] [effect]` | Add an item. `<item>` can be a name or part of one (`"team captain"`) or an item number. |
-| `inv_give_all [all \| weapons \| cosmetics \| taunts \| tools]` | Add one of every item you don't already have. `tools` gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits and the like. |
+| `inv_give <item> [quality] [effect]` | Add an item. `<item>` can be a name or part of one (`"team captain"`) or an item number. The effect can be a name (`"Burning Flames"`), part of one, a number, or `random`. |
+| `inv_give_all [all \| weapons \| cosmetics \| taunts \| tools]` | Add one of every item you don't already have. `tools` gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits, War Paints and the like. |
 | `inv_search <text>` | Find items by name and show their numbers. |
 | `inv_list [text]` | List your items with their item IDs. |
-| `inv_effects [text]` | List unusual effects and their numbers. |
+| `inv_effects [text]` | List unusual effects, their numbers and what they're for (hat, weapon, taunt). `inv_effects taunt` lists only taunt effects. |
+| `inv_unusual <id \| last> <effect>` | Give an item an unusual effect by name, number or `random` (and make it Unusual), or `none` to take it off. Press Tab after typing part of a name to complete it. |
+| `inv_wear <id \| last> <wear>` | Set a War Paint's or painted weapon's wear: `fn`, `mw`, `ft`, `ww`, `bs` or `random`. |
+| `inv_reroll <id \| last> [pattern \| wear \| both]` | Re-roll a War Paint's or painted weapon's pattern (default) or wear. |
 | `inv_paint <id \| last> <paint can>` | Paint an item, e.g. `inv_paint last "Team Spirit"`. |
 | `inv_setattr <id \| last> <attribute> <value>` | Set any attribute on an item. |
 | `inv_removeattr <id \| last> <attribute>` | Remove an attribute you set. |
@@ -64,8 +70,11 @@ Qualities: `normal`, `genuine`, `vintage`, `unusual`, `unique`, `community`,
 ### Examples
 
 ```
-inv_give "Team Captain" unusual 13
+inv_give "Team Captain" unusual "Burning Flames"
 inv_paint last "Team Spirit"
+
+inv_give "Bill's Hat" unusual random
+inv_unusual last sunbeams
 
 inv_give "Rocket Launcher" strange
 inv_setattr last "killstreak tier" 3
@@ -93,6 +102,14 @@ Get a set with `inv_give_all tools`, or one at a time with `inv_give`.
   Professional kits from `inv_give` pick their sheen (and eye effect) when used.
 - **Festivizer**: festivize a weapon.
 - **Taunt Unusualifier**: give a taunt an unusual effect.
+- **War Paints**: use one, pick a weapon type, and you get a new decorated
+  weapon with that paint, wear and pattern (what the preview shows). A Strange
+  or Unusual War Paint makes a Strange or Unusual weapon. Every War Paint has a
+  wear grade; `inv_wear` changes it and `inv_reroll` gives it a new pattern,
+  before or after you use it.
+
+The backpack's **Delete** and **Sort** work, and so do the loadout screen's
+controls for moving an Unusual effect up or down on a hat.
 
 The backpack's **Restore** options work too: remove paint, names, descriptions,
 strange parts, killstreaks or festivizing, and reset strange counters. So does
@@ -121,7 +138,8 @@ starts at $100, and your purchases show up as new items.
 
 Valve's real prices only ever lived on their servers, so the store uses flat
 defaults: weapons $0.99, hats $7.99, other cosmetics $4.99, taunts $5.99,
-bundles $19.99, keys $2.49, paint $1.99, cases $0.99. Change any of them in
+bundles $19.99, keys $2.49, paint $1.99, War Paints $2.99 (each with a random
+wear), cases $0.99. Change any of them in
 `game/mod_tf/cfg/offline_store_prices.txt` (create it), then run
 `inv_store_reload`:
 
@@ -173,7 +191,18 @@ tune them (each is a number from 0 to 1, saved between sessions):
 | `inv_crate_strange_chance` | `0.1` | Chance an item from a case is Strange. |
 | `inv_crate_bonus_chance` | `0.05` | Chance of each possible bonus item from a case. |
 
-Set `inv_crate_unusual_chance 1` for a night of nothing but Unusuals.
+To force results instead of changing the odds:
+
+| Setting | What it does |
+| --- | --- |
+| `inv_crate_force_unusual 1` | Every crate that can give an Unusual gives one. |
+| `inv_crate_force_strange 1` | Every case that can give a Strange item gives one. |
+| `inv_crate_force_grade <grade>` | Always get this grade from cases: `elite`, `assassin`, `commando`, `mercenary`, `freelance`, `civilian`, or `best`. A case without that grade gives the best one it has below it. |
+| `inv_crate_force_wear <wear>` | War paints from cases come out at this wear: `fn`, `mw`, `ft`, `ww` or `bs`. |
+| `inv_crate_luck jackpot` | All of the above at once (best grade, Factory New). |
+| `inv_crate_luck normal` | Turn all the forcing off again. |
+
+Leave a setting empty (e.g. `inv_crate_force_grade ""`) for the normal odds.
 
 About 25 old event crates (for example the 2010 Winter Crate and the 2013 Robo
 Crate) list contents that only ever existed on Valve's servers. Those don't
@@ -195,15 +224,21 @@ recipe the game ships with works, including:
   gives a random hat for that class.
 - **Weapon blueprints** (Pain Train, Homewrecker, Gunboats, ...), the Saxton Hale
   mask, the Headtaker and the Strange Count Transfer Tool.
+- **Mann Co. Trade-Ups** (right-click an item in the backpack, then Trade-Up):
+  ten items of the same grade from collections become one item of the next
+  grade, from the collection of one of the ten (picked at random). Ten Strange
+  items give a Strange one.
+- **Common Stat Clock**: trade up five Strange items (or items of Freelance grade
+  or better) for a Stat Clock.
 
 The **Custom** recipe at the bottom of the Special list tries your items against
 every recipe, like it used to.
 
 When a recipe gives something random, it picks from the items the game marks as
 craftable, leaving out stock weapons, war paints, festives and other limited
-editions, promo all-class melees (Saxxy, Bat Outta Hell, ...), and Halloween-only
-cosmetics, which only show up during Halloween. Valve's exact lists only ever
-lived on their servers, so this is a close match, not an exact one.
+editions, and promo all-class melees (Saxxy, Bat Outta Hell, ...). Valve's
+exact lists only ever lived on their servers, so this is a close match, not an
+exact one.
 
 Items you can't use in crafting, as in real TF2: anything marked "Not Usable in
 Crafting", Community, Valve and Self-Made items, and weapons bought from the
@@ -245,10 +280,16 @@ What's equipped is stored separately, in `game/mod_tf/cfg/local_loadout.txt`.
 
 ## Not done yet
 
-- Trading and gifts still expect Valve's servers, so they do nothing.
+- Trading, gifts, gift wrap, duels and other items you use on another player
+  still expect Valve's servers, so they do nothing.
+- Killstreak Kit Fabricators and Chemistry Sets don't work: Valve's servers
+  decided each one's parts and reward when it dropped, so one you give yourself
+  is empty. Give yourself the Killstreak Kit or Strangifier directly instead.
+- Halloween **spells** (paint spells, footprints, pumpkin bombs, voices) still
+  only show during Halloween or a full moon, and spellbook pages can't be used.
+  Halloween cosmetics work all year.
 - The store doesn't sell map stamps, and "try it on" previews don't work.
 - Bonus items that need extra setup (the Taunt Unusualifier, gifts) don't drop
   from cases yet.
 - "Your Strange item reached a new rank" messages don't appear; the rank in the
   item's name does change.
-- Backpack "sort" does nothing yet; dragging items around does work.

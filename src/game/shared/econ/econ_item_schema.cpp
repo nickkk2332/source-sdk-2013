@@ -3154,7 +3154,15 @@ bool CEconItemDefinition::BInitFromKV( KeyValues *pKVItem, CUtlVector<CUtlString
 	m_iInventoryImageSize[0] = atoi( m_pKVItem->GetString( "image_inventory_size_w", "128" ) );
 	m_iInventoryImageSize[1] = atoi( m_pKVItem->GetString( "image_inventory_size_h", "82" ) );
 	m_iInspectPanelDistance = m_pKVItem->GetInt( "inspect_panel_dist", 70 );
+#if defined( TF_CLIENT_DLL ) || defined( TF_DLL )
+	// Offline build: holiday items (Halloween / full moon cosmetics and the
+	// like) work all year, so nothing is holiday restricted. Every check for
+	// this (equipping, showing on the player, set bonuses, the backpack's
+	// "Halloween only" marker) goes through GetHolidayRestriction().
+	m_pszHolidayRestriction = NULL;
+#else
 	m_pszHolidayRestriction = m_pKVItem->GetString( "holiday_restriction", NULL );
+#endif
 	m_nVisionFilterFlags = m_pKVItem->GetInt( "vision_filter_flags", 0 );
 	m_iSubType = atoi( m_pKVItem->GetString( "subtype", "0" ) );
 	m_pszBaseDisplayModel = m_pKVItem->GetString( "model_player", NULL );

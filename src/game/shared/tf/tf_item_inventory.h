@@ -66,6 +66,7 @@ public:
 	virtual void		DumpInventoryToConsole( bool bRoot );
 
 	bool				ClassLoadoutHasChanged( int iClass ) { return m_bLoadoutChanged[iClass]; }
+	void				MarkClassLoadoutChanged( int iClass ) { if ( iClass >= 0 && iClass < TF_CLASS_COUNT ) m_bLoadoutChanged[iClass] = true; }
 	void				ClearClassLoadoutChangeTracking( void );
 
 	virtual void		NotifyHasNewItems() { OnHasNewItems(); }

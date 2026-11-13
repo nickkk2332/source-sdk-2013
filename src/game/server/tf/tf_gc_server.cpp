@@ -36,6 +36,7 @@
 #include "tf_gc_shared.h"
 #include "tf_party.h"
 #include "iserver.h"
+#include "tf_offline_inventory_shared.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -1350,7 +1351,11 @@ void CTFGCServerSystem::Shutdown()
 		GCClientSystem()->GetGCClient()->RemoveSOCacheListener( m_ourSteamID, this );
 	}
 
-	m_mapEquipmentRequests.PurgeAndDeleteElements();
+	FOR_EACH_MAP_FAST( m_mapPendingInventories, i )
+	{
+		m_mapPendingInventories.Element( i )->deleteThis();
+	}
+	m_mapPendingInventories.Purge();
 }
 
 void CTFGCServerSystem::LevelInitPreEntity()
@@ -1484,7 +1489,7 @@ void CTFGCServerSystem::PreClientUpdate( )
 
 	CRTime::UpdateRealTime();
 
-	WebapiEquipmentThink();
+	OfflineInventoryThink();
 
 	if ( GCClientSystem()->BConnectedtoGC() )
 	{
@@ -4026,314 +4031,130 @@ ConVar tf_mm_trusted( "tf_mm_trusted", "0", FCVAR_NOTIFY | FCVAR_HIDDEN,
 	"Set to 1 on Valve servers to requested trusted status.  (Yes, it is authenticated on the backend, and attempts by non-valve servers are logged.)\n",
 	OnMMServerModeTrustedChanged );
 
-// Backoff api
-void CTFGCServerSystem::WebapiEquipmentState_t::Backoff()
+//-----------------------------------------------------------------------------
+// Offline inventory
+//
+// There is no item server. Each client keeps its items in a save file and
+// sends us the ones it has equipped (see tf_offline_inventory_shared.h); we
+// trust that list and build the player's items from it.
+//-----------------------------------------------------------------------------
+static itemid_t GetLoadoutItemID( CTFPlayerInventory *pInventory, int iClass, int iSlot )
 {
-	if ( m_nBackoffSec == 0 )
-		m_nBackoffSec = 20;
-	else
-		m_nBackoffSec = ( m_nBackoffSec * 12 + 9 ) / 10; // exponential backoff @ 1.2x factor, round up
-
-	m_rtNextRequest = CRTime::RTime32TimeCur() + m_nBackoffSec;
-}
-
-void CTFGCServerSystem::WebapiEquipmentState_t::RequestSucceeded()
-{
-	m_rtNextRequest = 0;
-	m_nBackoffSec = 0;
-}
-
-bool CTFGCServerSystem::WebapiEquipmentState_t::IsBackingOff()
-{
-	return m_rtNextRequest != 0 && CRTime::RTime32TimeCur() <= m_rtNextRequest;
-}
-
-CTFGCServerSystem::WebapiEquipmentState_t& CTFGCServerSystem::FindOrCreateWebapiEquipmentState( CSteamID steamID )
-{
-	TMapEquipmentRequests::IndexType_t unEquipmentRequest = m_mapEquipmentRequests.Find( steamID );
-	if ( unEquipmentRequest == m_mapEquipmentRequests.InvalidIndex() )
-	{
-		WebapiEquipmentState_t* pNewState = new WebapiEquipmentState_t;
-		pNewState->m_ownerID = steamID;
-		unEquipmentRequest = m_mapEquipmentRequests.Insert( steamID, pNewState );
-	}
-
-	return *m_mapEquipmentRequests.Element( unEquipmentRequest );
-}
-
-void CTFGCServerSystem::WebapiEquipmentThink()
-{
-	FOR_EACH_MAP_FAST( m_mapEquipmentRequests, i )
-	{
-		WebapiEquipmentThinkRequest( m_mapEquipmentRequests.Key( i ), m_mapEquipmentRequests.Element( i ) );
-	}
-}
-void CTFGCServerSystem::WebapiEquipmentThinkRequest( CSteamID steamID, WebapiEquipmentState_t* pState )
-{
-	Assert( pState );
-	WebapiEquipmentState_t& state = *pState;
-
-	// If we are waiting on timer/rate limit, don't do anything
-	if ( state.IsBackingOff() )
-		return;
-
-	switch( state.m_eState )
-	{
-	case kWebapiEquipmentState_Init:
-		// Safe to return to this state from anywhere, let's clean up any in-flight data
-
-		// Remove any existing current request
-		if ( state.m_pKVCurrentRequest != nullptr )
-		{
-			state.m_pKVCurrentRequest->deleteThis();
-			state.m_pKVCurrentRequest = nullptr;
-		}
-
-		state.m_EquipmentRequestCompleted.Cancel();
-
-		if ( state.m_hEquipmentRequest != INVALID_HTTPREQUEST_HANDLE )
-		{
-			SteamHTTP()->ReleaseHTTPRequest( state.m_hEquipmentRequest );
-			state.m_hEquipmentRequest = INVALID_HTTPREQUEST_HANDLE;
-		}
-
-		state.m_eState = kWebapiEquipmentState_WaitingForClientRequest;
-		// fallthrough;
-
-	case kWebapiEquipmentState_WaitingForClientRequest:
-	{
-		Assert( state.m_pKVCurrentRequest == nullptr );
-		if ( state.m_pKVNextRequest == nullptr )
-			return;
-
-		V_swap( state.m_pKVCurrentRequest, state.m_pKVNextRequest );
-
-		state.m_eState = kWebapiEquipmentState_RequestInventory;
-		// fallthrough
-	}
-
-	case kWebapiEquipmentState_RequestInventory:
-	{
-		Assert( state.m_pKVCurrentRequest != nullptr );
-		KeyValues* pKV = state.m_pKVCurrentRequest;
-
-		if ( !SteamHTTP() )
-			return;
-
-		// Request inventory from teamfortress.com webapi
-		CFmtStr strUrl( "%swebapi/ISDK/GetEquipment/v0001", GetWebBaseUrl() );
-
-		state.m_EquipmentRequestCompleted.Cancel();
-		state.m_hEquipmentRequest = SteamHTTP()->CreateHTTPRequest( k_EHTTPMethodGET, strUrl.Get() );
-		if ( state.m_hEquipmentRequest == INVALID_HTTPREQUEST_HANDLE )
-		{
-			// try again next frame
-			return;
-		}
-
-		// This mod's appid (NOT tf2's appid)
-		SteamHTTP()->SetHTTPRequestGetOrPostParameter( state.m_hEquipmentRequest, "appid", CNumStr( engine->GetAppID() ) );
-
-		// Item list
-		SteamHTTP()->SetHTTPRequestGetOrPostParameter( state.m_hEquipmentRequest, "msg", pKV->GetString( "msg", nullptr ) );
-
-		// Authentication token
-		SteamHTTP()->SetHTTPRequestGetOrPostParameter( state.m_hEquipmentRequest, "ticket", pKV->GetString( "ticket", nullptr ) );
-
-		if ( GetUniverse() != k_EUniversePublic )
-		{
-			// use beta tf2 appid on non public universes
-			SteamHTTP()->SetHTTPRequestGetOrPostParameter( state.m_hEquipmentRequest, "game_appid", "810" );
-		}
-
-		// Is there a way we can validate the existing so cache?  We could only request the new items.
-		// Right now we only expect this message rarely so let's just ask for all the items each time.
-		//
-		// Since our cache is a subset of the full cache, we can't really use version# caching unless
-		// the set of items we are requesting is identical.  Maybe it'd be worth it to add "new" and
-		// "known" items to the API request and only version-cache the known ones?
-
-		//CGCClientSharedObjectCache* pExistingSOCache = GetSOCache( steamID );
-		//if ( pExistingSOCache && pExistingSOCache->BIsSubscribed() )
-		//{
-		//	SteamHTTP()->SetHTTPRequestGetOrPostParameter( state.m_hInventoryRequest, "version", CNumStr( pExistingSOCache->GetVersion() ) );
-		//}
-
-		SteamAPICall_t callResult;
-		if ( !SteamHTTP()->SendHTTPRequest( state.m_hEquipmentRequest, &callResult ) )
-		{
-			state.Backoff();
-			return;
-		}
-
-		state.m_EquipmentRequestCompleted.Set( callResult, pState, &WebapiEquipmentState_t::OnWebapiEquipmentReceived );
-		state.m_eState = kWebapiEquipmentState_WaitingForInventory;
-		break;
-	}
-
-	case kWebapiEquipmentState_WaitingForInventory:
-		// nothing to do until steam callback completes
-		break;
-
-	case kWebapiEquipmentState_InventoryReceived:
-		// No need to keep the current request around.
-		if ( state.m_pKVCurrentRequest )
-		{
-			state.m_pKVCurrentRequest->deleteThis();
-			state.m_pKVCurrentRequest = nullptr;
-		}
-
-		// Don't allow spamming this api -- wait 20 seconds before we ask gc for items again
-		state.RequestSucceeded();
-		state.Backoff();
-		state.m_eState = kWebapiEquipmentState_WaitingForClientRequest;
-		break;
-
-	case kWebapiEquipmentState_NotifyClientOfFailure:
-		if ( !TFGameRules() )
-			return;
-
-		TFGameRules()->RequestClientInventory( steamID );
-		state.m_eState = kWebapiEquipmentState_Init; // reset everything
-		break;
-	}
+	CEconItemView *pItem = pInventory->GetItemInLoadout( iClass, iSlot );
+	return pItem ? pItem->GetItemID() : INVALID_ITEM_ID;
 }
 
 void CTFGCServerSystem::ProcessPlayerInventoryRequest( CSteamID steamID, KeyValues* pKVRequest )
 {
-	WebapiEquipmentState_t& state = FindOrCreateWebapiEquipmentState( steamID );
-
-	// If they have a pending request we haven't acted on, it's now stale.
-	if( state.m_pKVNextRequest )
+	if ( ApplyClientInventory( steamID, pKVRequest ) )
 	{
-		state.m_pKVNextRequest->deleteThis();
-		state.m_pKVNextRequest = nullptr;
-	}
-
-	// Clone off their existing request for processing
-	state.m_pKVNextRequest = pKVRequest->MakeCopy();
-}
-
-void CTFGCServerSystem::WebapiEquipmentState_t::OnWebapiEquipmentReceived( HTTPRequestCompleted_t* pInfo, bool bIOFailure )
-{
-	GTFGCClientSystem()->OnWebapiEquipmentReceived( m_ownerID, pInfo, bIOFailure );
-}
-
-void CTFGCServerSystem::OnWebapiEquipmentReceived( CSteamID steamID, HTTPRequestCompleted_t* pInfo, bool bIOFailure )
-{
-	WebapiEquipmentState_t& state = FindOrCreateWebapiEquipmentState( steamID );
-	if ( state.m_eState != kWebapiEquipmentState_WaitingForInventory )
-		return;
-
-	// Assume failure, we'll correct this change if we succeeded
-	state.Backoff();
-	state.m_eState = kWebapiEquipmentState_RequestInventory;
-
-	if ( !SteamHTTP() )
-		return;
-
-	if( bIOFailure || !pInfo || state.m_hEquipmentRequest != pInfo->m_hRequest )
-	{
-		Assert( false );
-		if( state.m_hEquipmentRequest != INVALID_HTTPREQUEST_HANDLE )
+		// Applied; anything still queued for this player is out of date.
+		TMapPendingInventories::IndexType_t iPending = m_mapPendingInventories.Find( steamID );
+		if ( iPending != m_mapPendingInventories.InvalidIndex() )
 		{
-			SteamHTTP()->ReleaseHTTPRequest( state.m_hEquipmentRequest );
+			m_mapPendingInventories[iPending]->deleteThis();
+			m_mapPendingInventories.RemoveAt( iPending );
 		}
 		return;
 	}
 
-	// request failed -- backoff and retry
-	if ( !pInfo->m_bRequestSuccessful || pInfo->m_eStatusCode != k_EHTTPStatusCode200OK )
+	// The player isn't fully set up yet. Keep the newest request and retry each frame.
+	TMapPendingInventories::IndexType_t iPending = m_mapPendingInventories.Find( steamID );
+	if ( iPending != m_mapPendingInventories.InvalidIndex() )
 	{
-		SteamHTTP()->ReleaseHTTPRequest( state.m_hEquipmentRequest );
-		return;
-	}
-
-	// Extract the result
-	uint32 unBytes;
-	Verify( SteamHTTP()->GetHTTPResponseBodySize( pInfo->m_hRequest, &unBytes ) );
-	CUtlBuffer bufInventory;
-	bufInventory.EnsureCapacity( unBytes );
-	bufInventory.SeekPut( CUtlBuffer::SEEK_HEAD, unBytes );
-	Verify( SteamHTTP()->GetHTTPResponseBodyData( pInfo->m_hRequest, ( uint8* )bufInventory.Base(), unBytes ) );
-
-	// We're done with the request now
-	SteamHTTP()->ReleaseHTTPRequest( pInfo->m_hRequest );
-
-	// Parse it to json and extract the data
-	GCSDK::CWebAPIValues* pValues = GCSDK::CWebAPIValues::ParseJSON( bufInventory );
-	if ( !pValues )
-	{
-		Warning( "Received invalid response to inventory request\n" );
-		return;
-	}
-
-	int nResult = pValues->GetChildInt32Value( "result", k_EResultNone );
-	switch ( nResult )
-	{
-	case k_EResultOK:
-		break;
-
-	case k_EResultFail:
-		return; // will retry after backoff timer expires
-
-	case k_EResultValueOutOfRange:
-		// client gave us garbage?  Let's give them the benefit of the doubt and try again.
-		state.m_eState = kWebapiEquipmentState_NotifyClientOfFailure;
-		return;
-
-	case k_EResultNotLoggedOn:
-		// Ticket didn't authenticate successfully, ask them to send us a new one
-		state.m_eState = kWebapiEquipmentState_NotifyClientOfFailure;
-		return;
-
-	default:
-	{
-		CUtlString strError;
-		pValues->GetChildStringValue( strError, "error", "" );
-		Warning( "Received unexpected result code %d attempting to retrieve equipment for %s. (%s)\n", nResult, steamID.Render(), strError.Get() );
-		return;
-	}
-	}
-
-	// Parse the inventory message
-	CSteamID resultSteamID( pValues->GetChildUInt64Value( "steamID" ) );
-	if ( resultSteamID != steamID )
-	{
-		Warning( "Equipment response has bad owner steam id (%s, expected %s)\n", resultSteamID.Render(), steamID.Render() );
-		return;
-	}
-
-	if ( pValues->FindChild( "msg" ) )
-	{
-		CUtlBuffer bufMsgSubscription;
-		if ( !pValues->BGetChildBinaryValue( bufMsgSubscription, "msg" ) )
-		{
-			Warning( "Equipment response failed to extract inventory msg\n" );
-			return;
-		}
-
-		CGCClientSharedObjectCache *pSOCache = GetGCClient()->AddLocalSOCache( steamID, bufMsgSubscription.Base(), bufMsgSubscription.TellPut() );
-		if ( !pSOCache )
-		{
-			Warning( "Inventory response failed to create SO cache (probably protobuf didn't parse)\n" );
-			return;
-		}
-
-		SDK_ApplyInventoryInfo( pSOCache, state.m_pKVCurrentRequest );
-
-		// Version should match the one they said we have
-		Assert( pSOCache->GetVersion() == pValues->GetChildUInt64Value( "version" ) );
+		m_mapPendingInventories[iPending]->deleteThis();
+		m_mapPendingInventories[iPending] = pKVRequest->MakeCopy();
 	}
 	else
 	{
-		// this is a weird response, the server doesn't currently send socache versions and yet we didn't get the result
-		Warning( "Inventory response missing inventory msg\n" );
+		m_mapPendingInventories.Insert( steamID, pKVRequest->MakeCopy() );
+	}
+}
+
+void CTFGCServerSystem::OfflineInventoryThink()
+{
+	FOR_EACH_MAP_FAST( m_mapPendingInventories, i )
+	{
+		const CSteamID steamID = m_mapPendingInventories.Key( i );
+		KeyValues *pKVRequest = m_mapPendingInventories.Element( i );
+
+		// Keep waiting while the player is still here but not ready.
+		if ( UTIL_PlayerBySteamID( steamID ) && !ApplyClientInventory( steamID, pKVRequest ) )
+			continue;
+
+		pKVRequest->deleteThis();
+		m_mapPendingInventories.RemoveAt( i );
+	}
+}
+
+// Returns false if the player's inventory isn't ready yet and we should try again later.
+bool CTFGCServerSystem::ApplyClientInventory( CSteamID steamID, KeyValues* pKVRequest )
+{
+	CTFPlayerInventory *pTFInventory = dynamic_cast< CTFPlayerInventory * >( InventoryManager()->GetInventoryForAccount( steamID.GetAccountID() ) );
+	if ( !pTFInventory )
+		return false;
+
+	// Remember what they have on their current class, so we can tell if it changed.
+	CTFPlayer *pPlayer = ToTFPlayer( UTIL_PlayerBySteamID( steamID ) );
+	const int iClass = ( pPlayer && pPlayer->GetPlayerClass() ) ? pPlayer->GetPlayerClass()->GetClassIndex() : TF_CLASS_UNDEFINED;
+	const bool bValidClass = iClass >= TF_FIRST_NORMAL_CLASS && iClass < TF_LAST_NORMAL_CLASS;
+
+	itemid_t aPreviousLoadout[ CLASS_LOADOUT_POSITION_COUNT ];
+	for ( int iSlot = 0; iSlot < CLASS_LOADOUT_POSITION_COUNT; ++iSlot )
+	{
+		aPreviousLoadout[iSlot] = bValidClass ? GetLoadoutItemID( pTFInventory, iClass, iSlot ) : INVALID_ITEM_ID;
 	}
 
-	// We were successful, clear backoff timers
-	state.RequestSucceeded();
-	state.m_eState = kWebapiEquipmentState_InventoryReceived;
+	// Rebuild their items from what they sent.
+	COfflineSOCacheMsgBuilder builder;
+	KeyValues *pItemsKV = pKVRequest->FindKey( "items" );
+	if ( pItemsKV )
+	{
+		FOR_EACH_VALUE( pItemsKV, pItemKV )
+		{
+			std::string strItem;
+			if ( OfflineInventory_DecodeItemBytes( pItemKV->GetString(), strItem ) )
+			{
+				builder.AddObject( CEconItem::k_nTypeID, strItem );
+			}
+			else
+			{
+				Warning( "Offline inventory: %s sent an item we couldn't read.\n", steamID.Render() );
+			}
+		}
+	}
+
+	CUtlBuffer bufMsg;
+	builder.Serialize( steamID.ConvertToUint64(), ++m_ulOfflineInventoryVersion, bufMsg );
+
+	CGCClientSharedObjectCache *pSOCache = GetGCClient()->AddLocalSOCache( steamID, bufMsg.Base(), bufMsg.TellPut() );
+	if ( !pSOCache )
+	{
+		// Don't keep retrying a message that will never load.
+		Warning( "Offline inventory: couldn't load the items %s sent.\n", steamID.Render() );
+		return true;
+	}
+
+	SDK_ApplyInventoryInfo( pSOCache, pKVRequest );
+
+	// Like real TF2: change your current class's loadout while standing in the
+	// spawn room and you respawn wearing it.
+	if ( pPlayer && bValidClass && pKVRequest->GetBool( "respawn_on_change", true ) )
+	{
+		bool bChanged = false;
+		for ( int iSlot = 0; iSlot < CLASS_LOADOUT_POSITION_COUNT && !bChanged; ++iSlot )
+		{
+			bChanged = GetLoadoutItemID( pTFInventory, iClass, iSlot ) != aPreviousLoadout[iSlot];
+		}
+
+		if ( bChanged )
+		{
+			pTFInventory->MarkClassLoadoutChanged( iClass );
+			pPlayer->CheckInstantLoadoutRespawn();
+		}
+	}
+
+	return true;
 }
 
 void CTFGCServerSystem::SDK_ApplyInventoryInfo(CGCClientSharedObjectCache* pCache, KeyValues* pKVRequest)

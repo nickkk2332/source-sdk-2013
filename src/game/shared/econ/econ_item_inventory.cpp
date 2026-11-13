@@ -42,6 +42,10 @@
 #include "econ_quests.h"
 #endif
 
+#ifdef TF_CLIENT_DLL
+#include "tf_offline_inventory.h"
+#endif
+
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -737,6 +741,12 @@ void CInventoryManager::UpdateInventoryPosition( CPlayerInventory *pInventory, u
 		unNewInventoryPos |= kBackendPosition_NewFormat;
 	}
 #endif // defined(TF_CLIENT_DLL) || defined(TF_DLL)
+
+#ifdef TF_CLIENT_DLL
+	// There is no GC: items live in the offline inventory save file, so move them there.
+	TFOfflineInventory().SetItemPosition( ulItemID, unNewInventoryPos );
+	return;
+#endif // TF_CLIENT_DLL
 
 	// Queue a message to be sent to the GC
 	CMsgSetItemPositions_ItemPosition *pMsg = m_msgPendingSetItemPositions.add_item_positions();

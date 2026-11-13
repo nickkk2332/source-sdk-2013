@@ -272,36 +272,23 @@ void CGCClientSystem::PreClientUpdate()
 //-----------------------------------------------------------------------------
 void CGCClientSystem::ThinkConnection()
 {
-	// Currently logged on?
-	#ifdef CLIENT_DLL	
-		bool bLoggedOn = ClientSteamContext().BLoggedOn();
-	#else
-		bool bLoggedOn = steamgameserverapicontext && steamgameserverapicontext->SteamGameServer() && steamgameserverapicontext->SteamGameServer()->BLoggedOn();
+	// There is no Game Coordinator in this build: items come from the offline
+	// inventory save file (see tf_offline_inventory.h), so nothing here needs
+	// Steam's servers. Set up the item system once, as soon as we know who the
+	// local player is, even if Steam is in offline mode or this is a LAN server.
+	// (This used to wait for Steam to report a logon, so items never appeared
+	// without one.)
+	if ( m_bLoggedOn )
+		return;
+
+	#ifdef CLIENT_DLL
+		if ( !steamapicontext || !steamapicontext->SteamUser() || !steamapicontext->SteamUser()->GetSteamID().IsValid() )
+			return;
 	#endif
-	if ( bLoggedOn )
-	{
 
-		// We're logged on.  Is this a rising edge?
-		if ( !m_bLoggedOn )
-		{
-
-			// Re-init logon
-			m_bLoggedOn = true;
-
-			m_timeLastSendHello = -999.9;
-			SetupGC();
-		}
-
-
-	}
-	else
-	{
-
-		// We're not logged on.  Clear all connection state flags
-		m_bLoggedOn = false;
-		SetConnectedToGC( false );
-		m_timeLastSendHello = -999.9;
-	}
+	m_bLoggedOn = true;
+	m_timeLastSendHello = -999.9;
+	SetupGC();
 }
 
 void CGCClientSystem::SetConnectedToGC( bool bConnected )

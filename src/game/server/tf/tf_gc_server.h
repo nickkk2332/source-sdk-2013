@@ -603,59 +603,16 @@ private:
 	float m_timeLastConnectedToGC;
 //	DOTAGameVersion	m_GameVersion;
 
-	enum EWebapiEquipmentState {
-		kWebapiEquipmentState_Init,
+	//
+	// Offline inventory: clients send us the items they have equipped and we
+	// trust them, since there is no item server to ask.
+	//
+	typedef CUtlMap< CSteamID, KeyValues*, int, CDefLess<CSteamID> > TMapPendingInventories;
+	TMapPendingInventories m_mapPendingInventories;	// requests waiting for the player to finish joining
+	uint64 m_ulOfflineInventoryVersion = 0;
 
-		// Waiting for message from client listing equipped items
-		kWebapiEquipmentState_WaitingForClientRequest,
-
-		// Request inventory for the remote client
-		kWebapiEquipmentState_RequestInventory,
-		kWebapiEquipmentState_WaitingForInventory,
-		kWebapiEquipmentState_InventoryReceived,
-
-		// Failure that requires client intervention
-		// (they need to request a new auth token and send us more info)
-		kWebapiEquipmentState_NotifyClientOfFailure,
-	};
-
-	struct WebapiEquipmentState_t
-	{
-		CSteamID m_ownerID;
-
-		EWebapiEquipmentState m_eState = kWebapiEquipmentState_Init;
-
-		// Webapi equipment request
-		HTTPRequestHandle m_hEquipmentRequest = INVALID_HTTPREQUEST_HANDLE;
-		CCallResult<CTFGCServerSystem::WebapiEquipmentState_t, HTTPRequestCompleted_t> m_EquipmentRequestCompleted;
-
-		// Current request that is in flight
-		KeyValues* m_pKVCurrentRequest = nullptr;
-
-		// If we get a request to change loadout while we are waiting to get the items in the user's
-		// current inventory, we wait for the existing request to complete before asking for the new items
-		//
-		// Note that we will only request new items and assume that any existing items are up-to-date
-		// and unchanged, since sdk games cannot mutate the user's actual inventory.
-		KeyValues* m_pKVNextRequest = nullptr;
-
-		// Backoff
-		RTime32 m_rtNextRequest = 0;
-		int m_nBackoffSec = 0;
-		void Backoff();
-		void RequestSucceeded();	// resets backoff timers
-		bool IsBackingOff();
-
-		// Steam callback
-		void OnWebapiEquipmentReceived( HTTPRequestCompleted_t* pInfo, bool bIOFailure );
-	};
-	typedef CUtlMap< CSteamID, WebapiEquipmentState_t*, int, CDefLess<CSteamID> > TMapEquipmentRequests;
-	TMapEquipmentRequests m_mapEquipmentRequests;
-	WebapiEquipmentState_t& FindOrCreateWebapiEquipmentState( CSteamID steamID );
-
-	void WebapiEquipmentThink();
-	void WebapiEquipmentThinkRequest( CSteamID steamID, WebapiEquipmentState_t* pState );
-	void OnWebapiEquipmentReceived( CSteamID steamID, HTTPRequestCompleted_t* pInfo, bool bIOFailure );
+	void OfflineInventoryThink();
+	bool ApplyClientInventory( CSteamID steamID, KeyValues* pKVRequest );
 
 	void SDK_ApplyInventoryInfo( CGCClientSharedObjectCache* pCache, KeyValues* pKVRequest ); // mod expansion point
 	void SDK_ApplyLocalLoadout(CGCClientSharedObjectCache* pCache, KeyValues* pKVRequest);

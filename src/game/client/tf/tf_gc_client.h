@@ -301,84 +301,28 @@ private:
 
 	// DECL_STEAM_CALLBACK( LobbyChatMsg );
 	// DECL_STEAM_CALLBACK( SomeOtherFunThing... );
-	DECL_STEAM_CALLBACK( GetTicketForWebApiResponse );
 
 #undef DECL_STEAM_CALLBACK
 
 	//
-	// SDK inventory
+	// Offline inventory: our items come from a save file (see tf_offline_inventory.h).
+	// This sends the equipped ones to whatever server we're connected to.
 	//
-	void WebapiInventoryThink();
-	void OnWebapiInventoryReceived( HTTPRequestCompleted_t* pInfo, bool bIOFailure );
-	void OnWebapiAuthTicketReceived( GetTicketForWebApiResponse_t* pInfo );
+	void OfflineInventoryThink();
 
-	enum EWebapiInventoryState {
-		kWebapiInventoryState_Init,
-
-		// Request inventory for the local client
-		kWebapiInventoryState_RequestAuthToken,
-		kWebapiInventoryState_WaitingForAuthToken,
-		kWebapiInventoryState_AuthTokenReceived,
-		kWebapiInventoryState_RequestInventory,
-		kWebapiInventoryState_WaitingForInventory,
-		kWebapiInventoryState_InventoryReceived,
-
-		// Once we have the local client inventory, we will update it to match
-		// our set of equipped items, and then we will build an auth ticket to
-		// send to whatever server we are connected to.
-		kWebapiInventoryState_BuildServerMessage,
-		kWebapiInventoryState_RequestServerAuthToken,
-		kWebapiInventoryState_WaitingForServerAuthToken,
-		kWebapiInventoryState_ServerAuthTokenReceived,
-		kWebapiInventoryState_SentToServer,
-	};
-
-	struct WebapiInventoryState_t
+	enum EOfflineInventoryState
 	{
-		EWebapiInventoryState m_eState = kWebapiInventoryState_Init;
-
-		// Authentication
-		HAuthTicket m_hSteamAuthTicket = k_HAuthTicketInvalid;
-		CUtlVector<uint8> m_bufAuthToken;
-
-		// Inventory request
-		HTTPRequestHandle m_hInventoryRequest = INVALID_HTTPREQUEST_HANDLE;
-		CCallResult<CTFGCClientSystem, HTTPRequestCompleted_t> m_InventoryRequestCompleted;
-
-		// Server inventory -- they get a subset of our items that we allow
-		CMsgAuthorizeServerItemRetrieval m_msgItems;
-		CUtlMemory<char> m_strMsgItems; // serialized and base64 encoded version of m_msgItems, so we can sign it
-		HAuthTicket m_hServerAuthTicket = k_HAuthTicketInvalid;
-		CUtlVector<uint8> m_bufServerAuthToken;
-		CUtlString m_strServerIdentity; // hex-encoded SHA256 of m_bufMsgItems
-
-		// Did we make any changes that we need to communicate to a server?
-		bool m_bLocalChangesApplied = false;
-
-		// Backoff
-		RTime32 m_rtNextRequest = 0;
-		int m_nBackoffSec = 0;
-		void Backoff();
-		void RequestSucceeded();	// resets backoff timers
-		bool IsBackingOff();
+		kOfflineInventoryState_Loading,			// waiting for the save file to load
+		kOfflineInventoryState_Idle,			// loaded, not in a game
+		kOfflineInventoryState_SendToServer,	// in a game; send as soon as we're fully loaded in
+		kOfflineInventoryState_SentToServer,	// the server has our current items
 	};
-	WebapiInventoryState_t m_WebapiInventory;
+	EOfflineInventoryState m_eOfflineInventoryState = kOfflineInventoryState_Loading;
 
-	//
-	// SDK Server inventory -- just get the auth ticket and send it to the server
-	//
-	enum EWebapiServerInventoryState {
-		kWebapiServerInventoryState_Init,
-		kWebapiServerInventoryState_RequestAuthToken,
-		kWebapiServerInventoryState_WaitingForAuthToken,
-		kWebapiServerInventoryState_AuthTokenReceived,
-		kWebapiServerInventoryState_SendToServer
-	};
-	WebapiInventoryState_t m_WebapiServerInventory;
-	void OnWebapiServerAuthTicketReceived( GetTicketForWebApiResponse_t* pInfo );
+	// Did we make any changes that we need to communicate to a server?
+	bool m_bLocalChangesApplied = false;
 
-	// SDK expansion points
-	void SDK_SelectItemsToSendToServer( CMsgAuthorizeServerItemRetrieval* /*out*/ pMsg, CGCClientSharedObjectCache* pSOCache );
+	// SDK expansion point
 	void SDK_AddServerInventoryInfo( KeyValues* /*out*/ pKV, CGCClientSharedObjectCache* pSOCache );
 
 	//

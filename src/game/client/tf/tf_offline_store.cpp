@@ -219,8 +219,13 @@ KeyValues *OfflineStore_CreatePriceSheet()
 
 	// Store tabs, with the game's own labels.
 	KeyValues *pCategories = pSheet->FindKey( "categories", true );
+	// The home page's sub-tabs must come in this order: the store opens on the
+	// third one (Featured), and New / Popular / OnSale are kept but not shown.
 	AddCategory( pCategories, "Home",		"#Store_Home",		NULL, true );
+	AddCategory( pCategories, "New",		"#Store_New",		"Home" );
+	AddCategory( pCategories, "Popular",	"#Store_Popular",	"Home" );
 	AddCategory( pCategories, "Featured",	"#Store_Featured",	"Home" );
+	AddCategory( pCategories, "OnSale",		"#Store_OnSale",	"Home" );
 	AddCategory( pCategories, "Items",		"#Store_Items",		NULL );
 	AddCategory( pCategories, "Weapons",	"#Store_Weapons",	"Items" );
 	AddCategory( pCategories, "Cosmetics",	"#Store_Cosmetics",	"Items" );

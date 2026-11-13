@@ -134,6 +134,22 @@ CTFStorePage2::CTFStorePage2(Panel *parent, const CEconStoreCategoryManager::Sto
 				m_pHomeCategoryTabs->AddButton( i, pchName );
 			}
 		}
+
+		// The starting tab above assumes Valve's home page layout. If the price
+		// sheet's home page is laid out differently, start on its Featured tab
+		// (or its first one) instead of reading past the end of the list.
+		if ( !m_pPageData->m_vecSubcategories.IsValidIndex( m_iCurrentSubcategory ) )
+		{
+			m_iCurrentSubcategory = 0;
+			FOR_EACH_VEC( m_pPageData->m_vecSubcategories, i )
+			{
+				if ( m_pPageData->m_vecSubcategories[i]->m_unID == CEconStoreCategoryManager::k_CategoryID_Featured )
+				{
+					m_iCurrentSubcategory = i;
+					break;
+				}
+			}
+		}
 	}
 }
 
@@ -595,6 +611,9 @@ void CTFStorePage2::UpdateFilteredItems()
 
 	// Subcategories on the home page are special cases, as they aren't based on
 	// an item's tags.
+	if ( !m_pPageData->m_vecSubcategories.IsValidIndex( m_iCurrentSubcategory ) )
+		return;
+
 	const StoreCategoryID_t unSubcategoryID = m_pPageData->m_vecSubcategories[ m_iCurrentSubcategory ]->m_unID;
 
 	CStorePanel *pStorePanel = EconUI()->GetStorePanel();

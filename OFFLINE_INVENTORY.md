@@ -108,8 +108,9 @@ Get a set with `inv_give_all tools`, or one at a time with `inv_give`.
   wear grade; `inv_wear` changes it and `inv_reroll` gives it a new pattern,
   before or after you use it.
 
-The backpack's **Delete** and **Sort** work, and so do the loadout screen's
-controls for moving an Unusual effect up or down on a hat.
+The backpack's right-click menu works (use, inspect, equip, rename, paint,
+restore, trade-up, delete), and so do **Delete**, **Sort** and the loadout
+screen's controls for moving an Unusual effect up or down on a hat.
 
 The backpack's **Restore** options work too: remove paint, names, descriptions,
 strange parts, killstreaks or festivizing, and reset strange counters. So does
@@ -157,7 +158,10 @@ Featured tab picks 12 cosmetics and taunts each day.
 ## Crates
 
 Crates and cases open from the backpack like in real TF2: use the key on the
-crate (or open a keyless case), and you get the unboxing reveal.
+crate (or open a keyless case), and you get the unboxing reveal. Right-clicking
+a crate offers **Open with a key**, or **Get a key and open** if you have none:
+that buys a key from the Mann Co. Store with your fake wallet and opens the
+crate with it.
 
 | Command | What it does |
 | --- | --- |

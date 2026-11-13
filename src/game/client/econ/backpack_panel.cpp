@@ -1882,8 +1882,6 @@ void CBackpackPanel::AddCommerceToContextMenu( Menu *pMenu, const char* pszActio
 //-----------------------------------------------------------------------------
 void CBackpackPanel::OpenContextMenu()
 {
-	return;
-
 	CUtlVector<CEconItemView*> vecSelectedItems; 
 	for ( int i = 0; i < m_pItemModelPanels.Count(); i++ )
 	{
@@ -1979,6 +1977,13 @@ void CBackpackPanel::OpenContextMenu()
 			{
 				contextMenuBuilder.AddMenuItem( "#UseKey", new KeyValues( "Context_OpenCrateWithKey" ), "primaryaction" );
 			}
+#ifdef TF_CLIENT_DLL
+			else if ( GetDecodedByItemDefIndex( pItem ) )
+			{
+				// No key: buy one from the (offline) store and open the crate with it.
+				contextMenuBuilder.AddMenuItem( "#BuyAndUseKey", new KeyValues( "Context_BuyKeyAndOpenCrate" ), "primaryaction" );
+			}
+#endif
 
 		}
 		else if ( pItem->GetItemDefinition()->GetCapabilities() & ITEM_CAP_HAS_SLOTS )
@@ -2278,11 +2283,13 @@ void CBackpackPanel::OpenContextMenu()
 				contextMenuBuilder.AddMenuItem( "#Context_MarketPlaceSell", new KeyValues( "DoSellMarketplace" ), "economy" );
 			}
 
+#ifndef TF_CLIENT_DLL	// offline TF build: there's no one to trade with
 			// Trade to another player
 			if ( pItem->IsTradable() && !bSkipAddTrade )
 			{
 				contextMenuBuilder.AddMenuItem( "#Context_Trade", new KeyValues( "DoTradeToPlayer" ), "economy" );
 			}
+#endif
 
 			if ( pItem->GetItemDefinition()->GetCapabilities() & ITEM_CAP_CAN_BE_RESTORED )
 			{
@@ -3870,7 +3877,13 @@ CCollectionCraftingPanel* CBackpackPanel::GetCollectionCraftPanel()
 //-----------------------------------------------------------------------------
 void CBackpackPanel::DoBuyKeyAndOpenCrate()
 {
-	return;
+	// The store panel and its price list are only made when first needed.
+	if ( !CStorePanel::IsPricesheetLoaded() )
+	{
+		CStorePanel::RequestPricesheet();
+	}
+	if ( !EconUI()->GetStorePanel() )
+		return;
 
 	CUtlVector< CItemModelPanel* > vecSelected;
 	GetSelectedPanels( SELECT_FIRST, vecSelected );
@@ -3886,6 +3899,11 @@ void CBackpackPanel::DoBuyKeyAndOpenCrate()
 		// casting to the proper type since our econ system is dumb
 		const float& value_as_float = (float&)iDecoableItemDef;
 		CEconItemDefinition * pDefIndex = GetItemSchema()->GetItemDefinition( (int)value_as_float );
+		if ( !pDefIndex )
+		{
+			m_hQuickOpenCrate = NULL;
+			return;
+		}
 
 		EconUI()->GetStorePanel()->AddToCartAndCheckoutImmediately( pDefIndex->GetDefinitionIndex() );
 	}

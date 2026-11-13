@@ -151,6 +151,16 @@ private:
 	// How many items sit in each backpack slot (index 0 = not placed yet).
 	// A count rather than a flag because two items share a slot mid-swap.
 	int			m_nSlotUseCount[ MAX_NUM_BACKPACK_SLOTS + 1 ];
+	int			m_nOccupiedSlots;			// slots 1+ with at least one item
+	int			m_iHighestUsedSlot;
+	mutable int	m_iFirstFreeSlotHint;		// no free slot below this
+	int			m_nBackpackCapacity;		// slots the game shows; grows as the backpack fills
+
+	void		ResetSlots();
+	void		AddToSlot( int iSlot );
+	void		RemoveFromSlot( int iSlot );
+	int			GetWantedBackpackCapacity() const;
+	void		GrowBackpackIfNeeded();
 };
 
 CTFOfflineInventory &TFOfflineInventory();
@@ -165,6 +175,8 @@ enum EOfflineItemCategory
 	kCategory_Action,
 };
 EOfflineItemCategory OfflineInventory_GetItemCategory( const CEconItemDefinition *pItemDef );
+// Tournament and community medals (the game has thousands).
+bool		OfflineInventory_IsMedal( const CEconItemDefinition *pItemDef );
 
 // Helpers shared with the other offline inventory console commands.
 void		OfflineInventory_GetItemDefDisplayName( const CEconItemDefinition *pItemDef, char *pszOut, int nOutSize );

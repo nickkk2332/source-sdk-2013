@@ -17,7 +17,9 @@
 #define BACKPACK_SLOTS_PER_PAGE		50
 #define BACKPACK_ROWS				5
 #define BACKPACK_COLUMNS			(BACKPACK_SLOTS_PER_PAGE / BACKPACK_ROWS)
-#define BACKPACK_MAX_PAGES			(MAX_NUM_BACKPACK_SLOTS / BACKPACK_SLOTS_PER_PAGE)
+// Page buttons along the bottom (80 fit on screen). Pages past those are
+// reached with the arrows.
+#define BACKPACK_MAX_PAGES			(4000 / BACKPACK_SLOTS_PER_PAGE)
 
 class CDynamicRecipePanel;
 class CItemSlotPanel;

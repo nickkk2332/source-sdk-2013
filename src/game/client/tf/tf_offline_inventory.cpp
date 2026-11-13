@@ -59,8 +59,13 @@
 #define OFFLINE_INVENTORY_FILE		"cfg/offline_inventory.txt"
 #define OFFLINE_INVENTORY_PATH_ID	"MOD"
 
-// Everyone gets the biggest backpack the game supports.
-static const int kOfflineBackpackSlots = MAX_NUM_BACKPACK_SLOTS;
+// The backpack grows as you fill it: at least 4000 slots (80 pages), and always
+// a couple of empty pages past the last item, up to the most an item's
+// backpack position can hold.
+static const int kOfflineBackpackSlots = MAX_NUM_BACKPACK_SLOTS;	// hard limit
+static const int kOfflineBackpackMinSlots = 4000;
+static const int kOfflineBackpackSpareSlots = 100;
+static const int kOfflineBackpackPageSlots = 50;
 
 static CTFOfflineInventory g_TFOfflineInventory;
 CTFOfflineInventory &TFOfflineInventory()
@@ -137,8 +142,9 @@ CTFOfflineInventory::CTFOfflineInventory()
 	, m_unNextItemID( 1 )
 	, m_unLastGivenItemID( INVALID_ITEM_ID )
 	, m_ulCacheVersion( 0 )
+	, m_nBackpackCapacity( kOfflineBackpackMinSlots )
 {
-	V_memset( m_nSlotUseCount, 0, sizeof( m_nSlotUseCount ) );
+	ResetSlots();
 }
 
 CTFOfflineInventory::~CTFOfflineInventory()
@@ -224,11 +230,11 @@ bool CTFOfflineInventory::Load()
 
 	// Work out the next free item ID and which backpack slots are taken.
 	itemid_t unHighestID = 0;
-	V_memset( m_nSlotUseCount, 0, sizeof( m_nSlotUseCount ) );
+	ResetSlots();
 	FOR_EACH_TRUE_SUBKEY( pItemsKV, pItemKV )
 	{
 		unHighestID = MAX( unHighestID, ItemIDFromKV( pItemKV ) );
-		m_nSlotUseCount[ SlotFromKV( pItemKV ) ]++;
+		AddToSlot( SlotFromKV( pItemKV ) );
 	}
 
 	m_unNextItemID = MAX( (itemid_t)m_pData->GetInt( "next_item_id", 1 ), unHighestID + 1 );
@@ -286,8 +292,9 @@ bool CTFOfflineInventory::Resubscribe()
 	}
 
 	// Account record: this is what makes the backpack bigger than the default 300 slots.
+	m_nBackpackCapacity = GetWantedBackpackCapacity();
 	CSOEconGameAccountClient msgAccount;
-	msgAccount.set_additional_backpack_slots( kOfflineBackpackSlots - DEFAULT_NUM_BACKPACK_SLOTS );
+	msgAccount.set_additional_backpack_slots( m_nBackpackCapacity - DEFAULT_NUM_BACKPACK_SLOTS );
 	std::string strAccount;
 	msgAccount.SerializeToString( &strAccount );
 	builder.AddObject( k_EEconTypeGameAccountClient, strAccount );
@@ -354,23 +361,97 @@ int CTFOfflineInventory::GetItemCount() const
 
 int CTFOfflineInventory::GetFreeSlotCount() const
 {
-	int nFree = 0;
-	for ( int i = 1; i <= kOfflineBackpackSlots; ++i )
-	{
-		if ( m_nSlotUseCount[i] == 0 )
-			nFree++;
-	}
-	return nFree;
+	return kOfflineBackpackSlots - m_nOccupiedSlots;
 }
 
 int CTFOfflineInventory::FindFreeBackpackSlot() const
 {
-	for ( int i = 1; i <= kOfflineBackpackSlots; ++i )
+	for ( int i = MAX( m_iFirstFreeSlotHint, 1 ); i <= kOfflineBackpackSlots; ++i )
 	{
 		if ( m_nSlotUseCount[i] == 0 )
+		{
+			m_iFirstFreeSlotHint = i;
 			return i;
+		}
 	}
 	return 0;
+}
+
+//-----------------------------------------------------------------------------
+// Backpack slots. Counts rather than flags: during a swap two items briefly
+// share a slot. Slot 0 holds new items that haven't been placed yet.
+//-----------------------------------------------------------------------------
+void CTFOfflineInventory::ResetSlots()
+{
+	V_memset( m_nSlotUseCount, 0, sizeof( m_nSlotUseCount ) );
+	m_nOccupiedSlots = 0;
+	m_iHighestUsedSlot = 0;
+	m_iFirstFreeSlotHint = 1;
+}
+
+void CTFOfflineInventory::AddToSlot( int iSlot )
+{
+	if ( iSlot < 0 || iSlot > kOfflineBackpackSlots )
+		return;
+
+	if ( m_nSlotUseCount[iSlot]++ == 0 && iSlot > 0 )
+	{
+		m_nOccupiedSlots++;
+		m_iHighestUsedSlot = MAX( m_iHighestUsedSlot, iSlot );
+	}
+}
+
+void CTFOfflineInventory::RemoveFromSlot( int iSlot )
+{
+	if ( iSlot < 0 || iSlot > kOfflineBackpackSlots || m_nSlotUseCount[iSlot] <= 0 )
+		return;
+
+	if ( --m_nSlotUseCount[iSlot] == 0 && iSlot > 0 )
+	{
+		m_nOccupiedSlots--;
+		m_iFirstFreeSlotHint = MIN( m_iFirstFreeSlotHint, iSlot );
+		while ( m_iHighestUsedSlot > 0 && m_nSlotUseCount[m_iHighestUsedSlot] == 0 )
+		{
+			m_iHighestUsedSlot--;
+		}
+	}
+}
+
+// Enough slots for everything placed, everything waiting to be placed, and a
+// couple of empty pages, in whole pages.
+int CTFOfflineInventory::GetWantedBackpackCapacity() const
+{
+	int nWanted = m_iHighestUsedSlot + m_nSlotUseCount[0] + kOfflineBackpackSpareSlots;
+	nWanted = ( ( nWanted + kOfflineBackpackPageSlots - 1 ) / kOfflineBackpackPageSlots ) * kOfflineBackpackPageSlots;
+	return clamp( nWanted, kOfflineBackpackMinSlots, kOfflineBackpackSlots );
+}
+
+// Makes the backpack bigger if it's getting full. It never shrinks while you
+// play (pages don't disappear under you); it fits itself again next time the
+// backpack is rebuilt (loading, inv_give_all, inv_wipe, ...).
+void CTFOfflineInventory::GrowBackpackIfNeeded()
+{
+	const int nWanted = GetWantedBackpackCapacity();
+	if ( nWanted <= m_nBackpackCapacity )
+		return;
+
+	m_nBackpackCapacity = nWanted;
+
+	if ( m_nBulkChangeDepth > 0 )
+	{
+		m_bBulkChangePending = true;	// the rebuild at the end sends it
+		return;
+	}
+
+	GCSDK::CGCClientSharedObjectCache *pSOCache = GetLiveSOCache();
+	if ( !pSOCache )
+		return;
+
+	CSOEconGameAccountClient msgAccount;
+	msgAccount.set_additional_backpack_slots( m_nBackpackCapacity - DEFAULT_NUM_BACKPACK_SLOTS );
+	std::string strAccount;
+	msgAccount.SerializeToString( &strAccount );
+	pSOCache->BUpdateFromMsg( k_EEconTypeGameAccountClient, strAccount.data(), (uint32)strAccount.size() );
 }
 
 //-----------------------------------------------------------------------------
@@ -613,15 +694,19 @@ itemid_t CTFOfflineInventory::CreateItem( const CEconItemDefinition *pItemDef, i
 
 	GetItemsKV()->AddSubKey( pItemKV );
 
+	// Make room first, so the game never sees an item past the end of the backpack.
+	AddToSlot( iSlot );
+	GrowBackpackIfNeeded();
+
 	if ( !CreateLiveItem( pItemKV ) )
 	{
+		RemoveFromSlot( iSlot );
 		GetItemsKV()->RemoveSubKey( pItemKV );
 		pItemKV->deleteThis();
 		Warning( "Offline inventory: couldn't create %s.\n", pItemDef->GetDefinitionName() );
 		return INVALID_ITEM_ID;
 	}
 
-	m_nSlotUseCount[iSlot]++;
 	m_unNextItemID++;
 	m_pData->SetInt( "next_item_id", (int)m_unNextItemID );
 	m_unLastGivenItemID = unItemID;
@@ -830,9 +915,9 @@ bool CTFOfflineInventory::ApplyItemPosition( itemid_t unItemID, uint32 unBackend
 	if ( iOldSlot == iNewSlot )
 		return true;
 
-	// Counts rather than flags: during a swap two items briefly share a slot.
-	m_nSlotUseCount[iOldSlot]--;
-	m_nSlotUseCount[iNewSlot]++;
+	RemoveFromSlot( iOldSlot );
+	AddToSlot( iNewSlot );
+	GrowBackpackIfNeeded();
 	pItemKV->SetInt( "slot", iNewSlot );
 
 	// Once placed, it isn't a new item any more.
@@ -866,8 +951,8 @@ void CTFOfflineInventory::SetBackpackOrder( const CUtlVector< itemid_t > &vecIte
 		const int iOldSlot = SlotFromKV( pItemKV );
 		if ( iOldSlot != iSlot )
 		{
-			m_nSlotUseCount[iOldSlot]--;
-			m_nSlotUseCount[iSlot]++;
+			RemoveFromSlot( iOldSlot );
+			AddToSlot( iSlot );
 			pItemKV->SetInt( "slot", iSlot );
 			UpdateLiveItem( pItemKV );
 			m_bDirty = true;
@@ -893,7 +978,7 @@ bool CTFOfflineInventory::DeleteItem( itemid_t unItemID )
 		pLocalInventory->SaveLocalLoadout();
 	}
 
-	m_nSlotUseCount[ SlotFromKV( pItemKV ) ]--;
+	RemoveFromSlot( SlotFromKV( pItemKV ) );
 	GetItemsKV()->RemoveSubKey( pItemKV );
 	pItemKV->deleteThis();
 	m_bDirty = true;
@@ -942,7 +1027,7 @@ int CTFOfflineInventory::DeleteAllItems()
 	m_pData->RemoveSubKey( pItemsKV );
 	pItemsKV->deleteThis();
 	m_pData->FindKey( "items", true );
-	V_memset( m_nSlotUseCount, 0, sizeof( m_nSlotUseCount ) );
+	ResetSlots();
 	m_bDirty = true;
 
 	BeginBulkChange();
@@ -1323,6 +1408,12 @@ EOfflineItemCategory OfflineInventory_GetItemCategory( const CEconItemDefinition
 	return kCategory_None;
 }
 
+bool OfflineInventory_IsMedal( const CEconItemDefinition *pItemDef )
+{
+	const char *pszType = pItemDef ? pItemDef->GetItemTypeName() : NULL;
+	return pszType && ( !V_stricmp( pszType, "#TF_Wearable_TournamentMedal" ) || !V_stricmp( pszType, "#TF_Wearable_CommunityMedal" ) );
+}
+
 //-----------------------------------------------------------------------------
 // Shared argument handling
 //-----------------------------------------------------------------------------
@@ -1658,25 +1749,28 @@ static bool IsUsableOfflineTool( const CEconItemDefinition *pItemDef )
 }
 
 CON_COMMAND( inv_give_all, "Add one of every item you don't already have.\n"
-	"  Usage: inv_give_all [all | weapons | cosmetics | taunts | tools]\n"
-	"  \"tools\" gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits and the like." )
+	"  Usage: inv_give_all [all | weapons | cosmetics | taunts | tools | medals | everything]\n"
+	"  \"tools\" gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits, War Paints and the like.\n"
+	"  Tournament and community medals (thousands of them) are left out unless you ask for \"medals\" or \"everything\"." )
 {
 	if ( !CheckInventoryReady() )
 		return;
 
 	const char *pszFilter = args.ArgC() >= 2 ? args[1] : "all";
-	const bool bAll = !V_stricmp( pszFilter, "all" );
+	const bool bEverything = !V_stricmp( pszFilter, "everything" );
+	const bool bMedalsOnly = !V_stricmp( pszFilter, "medals" );
+	const bool bAll = bEverything || !V_stricmp( pszFilter, "all" );
 	const bool bTools = !V_stricmp( pszFilter, "tools" );
 	EOfflineItemCategory eOnly = kCategory_None;
 	if ( !V_stricmp( pszFilter, "weapons" ) )
 		eOnly = kCategory_Weapon;
-	else if ( !V_stricmp( pszFilter, "cosmetics" ) )
+	else if ( !V_stricmp( pszFilter, "cosmetics" ) || bMedalsOnly )
 		eOnly = kCategory_Cosmetic;
 	else if ( !V_stricmp( pszFilter, "taunts" ) )
 		eOnly = kCategory_Taunt;
 	else if ( !bAll && !bTools )
 	{
-		Msg( "Usage: inv_give_all [all | weapons | cosmetics | taunts | tools]\n" );
+		Msg( "Usage: inv_give_all [all | weapons | cosmetics | taunts | tools | medals | everything]\n" );
 		return;
 	}
 
@@ -1713,6 +1807,11 @@ CON_COMMAND( inv_give_all, "Add one of every item you don't already have.\n"
 			if ( eCategory == kCategory_None )
 				continue;
 			if ( !bAll && eCategory != eOnly )
+				continue;
+
+			// Medals only when asked for.
+			const bool bMedal = OfflineInventory_IsMedal( pItemDef );
+			if ( bMedalsOnly ? !bMedal : ( bMedal && !bEverything ) )
 				continue;
 		}
 

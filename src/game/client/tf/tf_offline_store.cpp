@@ -131,6 +131,9 @@ static int GetDefaultPrice( const CEconItemDefinition *pItemDef, const char **pp
 		*ppszCategory = "Weapons";
 		return 99;
 	case kCategory_Cosmetic:
+		// Tournament and community medals were never for sale (and there are thousands).
+		if ( OfflineInventory_IsMedal( pItemDef ) )
+			return 0;
 		*ppszCategory = "Cosmetics";
 		return IsHat( pItemDef ) ? 799 : 499;
 	case kCategory_Taunt:

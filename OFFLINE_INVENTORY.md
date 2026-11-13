@@ -44,12 +44,17 @@ wearing it, like real TF2 (turn this off with `tf_respawn_on_loadoutchanges 0`).
 Halloween (and other holiday-only) cosmetics work all year: you can equip them
 and they show up any time, no Halloween mode needed.
 
+The backpack has no fixed size. It starts at 80 pages and adds pages as you fill
+it, so it never runs out (the game's limit is 65,000 slots, far more than there
+are items). The page buttons along the bottom cover the first 80 pages; use the
+arrows to go further.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `inv_give <item> [quality] [effect]` | Add an item. `<item>` can be a name or part of one (`"team captain"`) or an item number. The effect can be a name (`"Burning Flames"`), part of one, a number, or `random`. |
-| `inv_give_all [all \| weapons \| cosmetics \| taunts \| tools]` | Add one of every item you don't already have. `tools` gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits, War Paints and the like. |
+| `inv_give_all [all \| weapons \| cosmetics \| taunts \| tools \| medals \| everything]` | Add one of every item you don't already have. `tools` gives paint cans, name tags, strange parts, Strangifiers, Killstreak Kits, War Paints and the like. Tournament and community medals (about 7,700 of them) are left out unless you use `medals` (only medals) or `everything`. |
 | `inv_search <text>` | Find items by name and show their numbers. |
 | `inv_list [text]` | List your items with their item IDs. |
 | `inv_effects [text]` | List unusual effects, their numbers and what they're for (hat, weapon, taunt). `inv_effects taunt` lists only taunt effects. |
@@ -153,7 +158,8 @@ wear), cases $0.99. Change any of them in
 ```
 
 Items can be named by their English name, internal name or number. The
-Featured tab picks 12 cosmetics and taunts each day.
+Featured tab picks 12 cosmetics and taunts each day. Tournament and community
+medals aren't sold (they never were).
 
 ## Crates
 
@@ -273,7 +279,7 @@ numbers are just an example):
 
 - `def` is the item number (see `inv_search`); `name` is only used if that number
   stops existing in a future game update.
-- `slot` is the backpack slot (1 to 4000); `0` means "new, not placed yet"
+- `slot` is the backpack slot (1 and up); `0` means "new, not placed yet"
   (`new_reason` then says how it arrived, e.g. found in a crate).
 - You can also add `"custom_name"` and `"custom_desc"` to an item.
 

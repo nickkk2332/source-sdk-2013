@@ -119,6 +119,12 @@ public:
 	static bool	ShouldShowWarnings( void ) { return CStorePanel::m_bShowWarnings; }
 	static void SetShouldShowWarnings( bool bShow ) { CStorePanel::m_bShowWarnings = bShow; }
 	static void	RequestPricesheet( void );
+#ifdef TF_CLIENT_DLL
+	// There is no item server: the price list is built locally and checkout
+	// charges the offline inventory's wallet (see tf_offline_store.h).
+	static void	LoadOfflinePricesheet( void );
+	void		DoOfflineCheckout( void );
+#endif
 
 	const CEconStorePriceSheet *GetPriceSheet( void ) { return &m_StoreSheet; }
 	CEconStorePriceSheet *GetPriceSheetForEdit( void ) { return &m_StoreSheet; }

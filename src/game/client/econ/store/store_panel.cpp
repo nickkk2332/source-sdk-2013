@@ -31,6 +31,11 @@
 #include "rtime.h"
 #include "item_ad_panel.h"
 #include "tf_matchmaking_dashboard.h"
+
+#ifdef TF_CLIENT_DLL
+#include "tf_offline_store.h"
+#include "tf_offline_inventory.h"
+#endif
 #endif
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -548,9 +553,56 @@ void CStorePanel::RequestPricesheet( void )
 	// Create the store panel the first time we request a price sheet
 	EconUI()->CreateStorePanel();
 
+#ifdef TF_CLIENT_DLL
+	LoadOfflinePricesheet();
+#else
 	CGCClientJobGetUserData *pJob = new CGCClientJobGetUserData( GCClientSystem()->GetGCClient(), 0 );
 	pJob->StartJob( NULL );
+#endif
 }
+
+#ifdef TF_CLIENT_DLL
+//-----------------------------------------------------------------------------
+// Purpose: Loads the offline price list. Does what CGCClientJobGetUserData
+//			does with the item server's reply.
+//-----------------------------------------------------------------------------
+void CStorePanel::LoadOfflinePricesheet( void )
+{
+	CStorePanel *pStorePanel = EconUI()->GetStorePanel();
+	if ( !pStorePanel )
+		return;
+
+	const bool bInitialLoad = !CStorePanel::IsPricesheetLoaded();
+	if ( bInitialLoad )
+	{
+		CloseStoreStatusDialog();
+	}
+	else
+	{
+		pStorePanel->GetPropertySheet()->DeleteAllPages();
+	}
+
+	KeyValuesAD pKVPricesheet( OfflineStore_CreatePriceSheet() );
+	pKVPricesheet->SetInt( "featured_item_index", 0 );
+	pKVPricesheet->SetInt( "default_sort_type", 0 );
+	pStorePanel->LoadPricesheet( &pKVPricesheet );
+
+	pStorePanel->ClearPopularItems();
+	pStorePanel->SetCurrency( k_ECurrencyUSD );
+	pStorePanel->SetCountryCode( "US" );
+
+	if ( !bInitialLoad && pStorePanel->IsVisible() )
+	{
+		pStorePanel->ShowPanel( true );
+	}
+
+	IGameEvent *event = gameeventmanager->CreateEvent( "store_pricesheet_updated" );
+	if ( event )
+	{
+		gameeventmanager->FireEventClientSide( event );
+	}
+}
+#endif // TF_CLIENT_DLL
 
 //-----------------------------------------------------------------------------
 // Purpose: Asynchronous job for getting the price sheet from the GC
@@ -747,6 +799,9 @@ void CStorePanel::SetCountryCode( const char* in_country )
 bool CStorePanel::ShouldUpsellStamps( void )
 {
 #ifdef TF_CLIENT_DLL
+	// The offline store doesn't sell map stamps.
+	return false;
+
 	bool bForceShow = false;
 
 	CheckButton *pSupportCheckButton = static_cast< CheckButton* >( FindChildByName( "SupportCommunityMapMakersCheckButton" ) );
@@ -1094,6 +1149,12 @@ void CStorePanel::InitiateCheckout( bool bSkipUpsell, bool bSkipDecoderWarning /
 void CStorePanel::DoCheckout()
 {
 	m_iCheckoutAttempts++;
+
+#ifdef TF_CLIENT_DLL
+	DoOfflineCheckout();
+	return;
+#endif
+
 	EconUI()->Gamestats_Store( IE_STORE_CHECKOUT_ATTEMPT, NULL, NULL, 0, NULL, m_iCheckoutAttempts );
 
 	// Create the checkout job.
@@ -1101,6 +1162,79 @@ void CStorePanel::DoCheckout()
 	CGCClientJobInitPurchase *pJob = new CGCClientJobInitPurchase( GCClientSystem()->GetGCClient() );
 	pJob->StartJob( NULL );
 }
+
+#ifdef TF_CLIENT_DLL
+//-----------------------------------------------------------------------------
+// Purpose: Checkout without Steam: pay from the offline wallet. Mirrors the
+//			checks in CGCClientJobInitPurchase and the success handling in
+//			CGCClientJobFinalizePurchase.
+//-----------------------------------------------------------------------------
+void CStorePanel::DoOfflineCheckout( void )
+{
+	CStoreCart *pCart = GetCart();
+
+	const int nTotalItems = pCart->GetTotalItems();
+	if ( nTotalItems <= 0 )
+	{
+		OpenStoreStatusDialog( NULL, "#StoreCheckout_NoItems", true, false );
+		return;
+	}
+	if ( nTotalItems > MAX_CART_ITEMS )
+	{
+		OpenStoreStatusDialog( NULL, "#StoreCheckout_TooManyItems", true, false );
+		return;
+	}
+	if ( !InventoryManager()->GetLocalInventory()->CanPurchaseItems( pCart->GetTotalConcreteItems() ) )
+	{
+		OpenStoreStatusDialog( NULL, "#StoreCheckout_NotEnoughRoom_MaxSize", true, false );
+		return;
+	}
+
+	int nTotalCents = 0;
+	for ( int i = 0; i < pCart->GetNumEntries(); i++ )
+	{
+		const cart_item_t *pCartItem = pCart->GetItem( i );
+		nTotalCents += pCartItem->iQuantity * pCartItem->pEntry->GetCurrentPrice( GetCurrency() );
+	}
+
+	char szCost[64], szWallet[64];
+	OfflineStore_FormatMoney( nTotalCents, szCost, sizeof( szCost ) );
+	OfflineStore_FormatMoney( TFOfflineInventory().GetWalletCents(), szWallet, sizeof( szWallet ) );
+
+	if ( nTotalCents > TFOfflineInventory().GetWalletCents() )
+	{
+		OpenStoreStatusDialog( NULL, CFmtStr( "You don't have enough money for that.\n\nCart: %s    Wallet: %s\n\nAdd money with inv_wallet_add in the console.", szCost, szWallet ), true, false );
+		return;
+	}
+
+	TFOfflineInventory().SetWalletCents( TFOfflineInventory().GetWalletCents() - nTotalCents );
+
+	// The new items arrive as "purchased" items the game shows you.
+	for ( int i = 0; i < pCart->GetNumEntries(); i++ )
+	{
+		const cart_item_t *pCartItem = pCart->GetItem( i );
+		const CEconItemDefinition *pItemDef = GetItemSchema()->GetItemDefinition( pCartItem->pEntry->GetItemDefinitionIndex() );
+		if ( pItemDef )
+		{
+			OfflineStore_GiveItem( pItemDef, pCartItem->iQuantity * MAX( pCartItem->pEntry->GetQuantity(), 1 ) );
+		}
+	}
+
+	SetTransactionID( 0 );
+	pCart->EmptyCart();
+
+	CStoreViewCartPanel *pCartPanel = GetStoreViewCartPanel();
+	if ( pCartPanel && pCartPanel->IsVisible() )
+	{
+		pCartPanel->ShowPanel( false );
+	}
+
+	OfflineStore_FormatMoney( TFOfflineInventory().GetWalletCents(), szWallet, sizeof( szWallet ) );
+	OpenStoreStatusDialog( NULL, CFmtStr( "Transaction completed! Enjoy your loot!\n\nPaid %s. Your wallet has %s left.", szCost, szWallet ), true, true );
+
+	PostTransactionCompleted();
+}
+#endif // TF_CLIENT_DLL
 
 //-----------------------------------------------------------------------------
 // Purpose:
@@ -2045,7 +2179,15 @@ void OpenStoreStatusDialog( vgui::Panel *pParent, const char *pszText, bool bAll
 
 	SetupStoreStatusDialog( pParent );
 	g_StoreStatusPanel->UpdateSchemeForVersion();
-	g_StoreStatusPanel->SetDialogVariable( "updatetext", g_pVGuiLocalize->Find( pszText ) );
+	// Plain text is allowed too (the offline store uses it for wallet amounts).
+	const wchar_t *pwszText = g_pVGuiLocalize->Find( pszText );
+	wchar_t wszText[1024];
+	if ( !pwszText )
+	{
+		g_pVGuiLocalize->ConvertANSIToUnicode( pszText, wszText, sizeof( wszText ) );
+		pwszText = wszText;
+	}
+	g_StoreStatusPanel->SetDialogVariable( "updatetext", pwszText );
 	g_StoreStatusPanel->ShowStatusUpdate( bAllowClose, bShowOnExit, bCancel );
 }
 

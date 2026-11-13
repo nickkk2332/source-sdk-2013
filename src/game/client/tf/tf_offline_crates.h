@@ -59,6 +59,8 @@ bool OfflineCrates_RollAttributeTemplate( const char *pszTemplateName, const CEc
 // Crates and keys
 bool OfflineCrates_IsCrate( const CEconItemDefinition *pItemDef );
 bool OfflineCrates_NeedsKey( const CEconItemDefinition *pCrateDef );
+// False for crates whose contents only ever existed on Valve's servers (or that need a series number).
+bool OfflineCrates_HasKnownContents( const CEconItemDefinition *pCrateDef );
 const CEconItemDefinition *OfflineCrates_GetKeyForCrate( const CEconItemDefinition *pCrateDef );
 
 #endif // TF_OFFLINE_CRATES_H

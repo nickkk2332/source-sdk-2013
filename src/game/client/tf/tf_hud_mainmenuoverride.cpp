@@ -529,11 +529,8 @@ void CHudMainMenuOverride::ApplySchemeSettings( IScheme *scheme )
 	m_pDisconnectButton = dynamic_cast<CExButton*>( FindChildByName("DisconnectButton") );
 	m_pBackToReplaysButton = dynamic_cast<CExButton*>( FindChildByName("BackToReplaysButton") );
 	m_pStoreHasNewItemsImage = dynamic_cast<ImagePanel*>( FindChildByName( "StoreHasNewItemsImage", true ) );
+	// The offline Mann Co. Store works, so leave its button showing.
 	m_pStoreButton = dynamic_cast<CExButton*>(FindChildByName("GeneralStoreButton"));
-	if (m_pStoreButton)
-	{
-		m_pStoreButton->SetVisible(false);
-	}
 
 	m_pWatchStreamButton = dynamic_cast<EditablePanel*>(FindChildByName("WatchStreamButton"));
 	if (m_pWatchStreamButton)

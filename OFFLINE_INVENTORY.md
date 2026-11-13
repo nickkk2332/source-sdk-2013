@@ -83,6 +83,38 @@ Strange items count kills (and whatever their strange parts track) while you
 play, and the counts are saved with your items. Kills on bots count, which real
 TF2 doesn't do; turn that off with `inv_strange_counts_bots 0`.
 
+## Mann Co. Store
+
+Open the store from the main menu's store button (or `open_store` in the
+console). Everything is for sale: every weapon, cosmetic, taunt and bundle,
+plus keys, cases and the tools above. Checkout pays from a fake wallet that
+starts at $100, and your purchases show up as new items.
+
+| Command | What it does |
+| --- | --- |
+| `inv_wallet` | Show your balance. |
+| `inv_wallet_add <dollars>` | Add money, e.g. `inv_wallet_add 50`. |
+| `inv_wallet_set <dollars>` | Set your balance. |
+| `inv_store_sale <percent>` | Put everything on sale (0 to 90% off). |
+| `inv_store_reload` | Reload prices after editing the price file. |
+
+Valve's real prices only ever lived on their servers, so the store uses flat
+defaults: weapons $0.99, hats $7.99, other cosmetics $4.99, taunts $5.99,
+bundles $19.99, keys $2.49, paint $1.99, cases $0.99. Change any of them in
+`game/mod_tf/cfg/offline_store_prices.txt` (create it), then run
+`inv_store_reload`:
+
+```
+"offline_store_prices"
+{
+	"Team Captain"				"14.99"
+	"Mann Co. Supply Crate Key"	"0"		// 0 = not for sale
+}
+```
+
+Items can be named by their English name, internal name or number. The
+Featured tab picks 12 cosmetics and taunts each day.
+
 ## Crates
 
 Crates and cases open from the backpack like in real TF2: use the key on the
@@ -161,8 +193,8 @@ What's equipped is stored separately, in `game/mod_tf/cfg/local_loadout.txt`.
 
 ## Not done yet
 
-- Crafting, the Mann Co. Store, trading and gifts still expect Valve's servers,
-  so they do nothing.
+- Crafting, trading and gifts still expect Valve's servers, so they do nothing.
+- The store doesn't sell map stamps, and "try it on" previews don't work.
 - Bonus items that need extra setup (the Taunt Unusualifier, gifts) don't drop
   from cases yet.
 - "Your Strange item reached a new rank" messages don't appear; the rank in the

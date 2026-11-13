@@ -973,3 +973,17 @@ bool OfflineCrates_RollAttributeTemplate( const char *pszTemplateName, const CEc
 	strValue = pAttrKV->GetString();
 	return true;
 }
+
+bool OfflineCrates_HasKnownContents( const CEconItemDefinition *pCrateDef )
+{
+	if ( !OfflineCrates_IsCrate( pCrateDef ) )
+		return false;
+
+	const int iSeries = GetCrateDefSeries( pCrateDef );
+	if ( iSeries )
+		return SeriesHasKnownContents( iSeries );
+
+	CUtlString strLootList;
+	return OfflineCrates_GetStaticAttribValue( pCrateDef, "loot list name", strLootList )
+		&& GetItemSchema()->GetLootListByName( strLootList.Get() ) != NULL;
+}

@@ -773,27 +773,17 @@ void CCharacterInfoPanel::CreateStorePanel( void )
 //-----------------------------------------------------------------------------
 CStorePanel	*CCharacterInfoPanel::OpenStorePanel( int iItemDef, bool bAddToCart )
 {
-	return NULL;
-
-	// Make sure we've got the appropriate connections to Steam
-	if ( !steamapicontext || !steamapicontext->SteamUtils() )
+	// The offline store needs no Steam overlay (checkout uses the offline
+	// wallet) and builds its price list on the spot (see tf_offline_store.h).
+	if ( !CStorePanel::IsPricesheetLoaded() )
 	{
-		OpenStoreStatusDialog( NULL, "#StoreUpdate_SteamRequired", true, false );
-		return NULL;
-	}
-
-	if ( !steamapicontext->SteamUtils()->IsOverlayEnabled() )
-	{
-		OpenStoreStatusDialog( NULL, "#StoreUpdate_OverlayRequired", true, false );
-		return NULL;
+		CStorePanel::SetShouldShowWarnings( true );
+		CStorePanel::RequestPricesheet();
 	}
 
 	if ( !CStorePanel::IsPricesheetLoaded() )
 	{
 		OpenStoreStatusDialog( NULL, "#StoreUpdate_Loading", false, false );
-
-		CStorePanel::SetShouldShowWarnings( true );
-		CStorePanel::RequestPricesheet();
 		return NULL;
 	}
 

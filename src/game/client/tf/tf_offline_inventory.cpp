@@ -721,6 +721,25 @@ bool CTFOfflineInventory::SetItemStyle( itemid_t unItemID, int nStyle )
 }
 
 //-----------------------------------------------------------------------------
+// Wallet (for the Mann Co. Store). Kept in cents; new saves start with $100.
+//-----------------------------------------------------------------------------
+static const int kStartingWalletCents = 10000;
+
+int CTFOfflineInventory::GetWalletCents() const
+{
+	return m_pData ? m_pData->GetInt( "wallet_cents", kStartingWalletCents ) : 0;
+}
+
+void CTFOfflineInventory::SetWalletCents( int nCents )
+{
+	if ( !m_pData )
+		return;
+
+	m_pData->SetInt( "wallet_cents", MAX( nCents, 0 ) );
+	m_bDirty = true;
+}
+
+//-----------------------------------------------------------------------------
 const CEconItemDefinition *CTFOfflineInventory::GetItemDef( itemid_t unItemID ) const
 {
 	KeyValues *pItemKV = FindItemKV( unItemID );
@@ -1241,16 +1260,7 @@ static const char *GetQualityDisplayName( int nQuality )
 //-----------------------------------------------------------------------------
 // Item categories, for inv_give_all
 //-----------------------------------------------------------------------------
-enum EOfflineItemCategory
-{
-	kCategory_None,
-	kCategory_Weapon,
-	kCategory_Cosmetic,
-	kCategory_Taunt,
-	kCategory_Action,
-};
-
-static EOfflineItemCategory GetItemCategory( const CEconItemDefinition *pItemDef )
+EOfflineItemCategory OfflineInventory_GetItemCategory( const CEconItemDefinition *pItemDef )
 {
 	const GameItemDefinition_t *pTFItemDef = static_cast< const GameItemDefinition_t * >( pItemDef );
 	for ( int iClass = TF_FIRST_NORMAL_CLASS; iClass < TF_LAST_NORMAL_CLASS; ++iClass )
@@ -1322,7 +1332,7 @@ static const CEconItemAttributeDefinition *ParseAttribute( const char *pszArg )
 // Unusual taunts store their effect in a different attribute than hats and weapons.
 static const CEconItemAttributeDefinition *GetUnusualEffectAttribute( const CEconItemDefinition *pItemDef )
 {
-	const char *pszAttrName = ( GetItemCategory( pItemDef ) == kCategory_Taunt )
+	const char *pszAttrName = ( OfflineInventory_GetItemCategory( pItemDef ) == kCategory_Taunt )
 		? "on taunt attach particle index"
 		: "attach particle effect";
 	return GetItemSchema()->GetAttributeDefinitionByName( pszAttrName );
@@ -1469,7 +1479,7 @@ CON_COMMAND( inv_give_all, "Add one of every item you don't already have.\n"
 			if ( pItemDef->IsTool() )
 				continue;
 
-			const EOfflineItemCategory eCategory = GetItemCategory( pItemDef );
+			const EOfflineItemCategory eCategory = OfflineInventory_GetItemCategory( pItemDef );
 			if ( eCategory == kCategory_None )
 				continue;
 			if ( !bAll && eCategory != eOnly )

@@ -74,6 +74,10 @@ public:
 	bool		SetItemQuality( itemid_t unItemID, int nQuality );
 	bool		SetItemStyle( itemid_t unItemID, int nStyle );
 
+	// Fake wallet for the Mann Co. Store, in cents.
+	int			GetWalletCents() const;
+	void		SetWalletCents( int nCents );
+
 	// The item as the game sees it (definition and attributes combined). NULL if it doesn't exist.
 	const CEconItem				*GetLiveItem( itemid_t unItemID ) const { return FindLiveItem( unItemID ); }
 	const CEconItemDefinition	*GetItemDef( itemid_t unItemID ) const;
@@ -148,6 +152,17 @@ private:
 };
 
 CTFOfflineInventory &TFOfflineInventory();
+
+// What kind of item this is, by the loadout slot it goes in.
+enum EOfflineItemCategory
+{
+	kCategory_None,
+	kCategory_Weapon,
+	kCategory_Cosmetic,
+	kCategory_Taunt,
+	kCategory_Action,
+};
+EOfflineItemCategory OfflineInventory_GetItemCategory( const CEconItemDefinition *pItemDef );
 
 // Helpers shared with the other offline inventory console commands.
 void		OfflineInventory_GetItemDefDisplayName( const CEconItemDefinition *pItemDef, char *pszOut, int nOutSize );

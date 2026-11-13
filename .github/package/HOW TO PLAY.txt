@@ -1,0 +1,28 @@
+Offline TF2: a personal, offline-only TF2 mod with every item, crates,
+tools, a fake Mann Co. Store and crafting. It doesn't touch your real TF2
+inventory and can't join real TF2 servers.
+
+You need on this PC
+-------------------
+- Steam, running and logged in
+- Team Fortress 2, installed
+- Source SDK Base 2013 Multiplayer, installed. It's free: find it in your
+  Steam Library under Tools.
+
+To play
+-------
+1. Unzip this folder anywhere you like, for example in Documents. Keep
+   everything in it together.
+2. Double-click "Play Offline TF2.bat".
+3. Open the console (Options > Advanced > Enable developer console) and give
+   yourself items, for example:  inv_give_all
+4. Start a server from the main menu ("Create Server") and add bots with
+   tf_bot_add.
+
+OFFLINE_INVENTORY.md (open it in Notepad) lists every command.
+
+Your items
+----------
+Your items are saved in mod_tf\cfg\offline_inventory.txt. To update to a newer
+build, unzip it on top of this folder and let it replace the files; that keeps
+your items.

@@ -1,0 +1,99 @@
+# Builds the mod for Windows on GitHub's machines.
+#
+# Every push builds it; download the result from the run's page on the Actions
+# tab ("OfflineTF2-windows"). Pushing a tag that starts with "v" (for example
+# v1) also publishes a GitHub Release with the zip attached.
+
+name: Windows build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish a Release from a tag
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # One build step turns VScript files into headers with a Python script.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: microsoft/setup-msbuild@v2
+
+      # Only the projects the game needs (client, server, the launcher and the
+      # libraries they use), not the mapping tools.
+      - name: Generate the Visual Studio solution
+        working-directory: src
+        shell: cmd
+        run: devtools\bin\vpc.exe /tf /win64 /define:SOURCESDK +game /mksln game.sln
+
+      - name: Build
+        working-directory: src
+        shell: cmd
+        run: msbuild game.sln /m /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=win64 /p:PreferredToolArchitecture=x64
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $required = 'game/mod_tf_win64.exe', 'game/bin/x64/steam_api64.dll',
+                      'game/mod_tf/bin/x64/client.dll', 'game/mod_tf/bin/x64/server.dll'
+          foreach ( $file in $required ) {
+            if ( -not ( Test-Path $file ) ) { throw "The build didn't produce $file" }
+          }
+
+          $out = 'dist\OfflineTF2'
+          New-Item -ItemType Directory -Force "$out\bin\x64" | Out-Null
+          Copy-Item game/mod_tf_win64.exe $out
+          Copy-Item game\bin\x64\* "$out\bin\x64"
+
+          # The mod folder, without debug symbols (those go in a separate download).
+          robocopy game\mod_tf "$out\mod_tf" /E /XF *.pdb *.map /NFL /NDL /NJH /NJS
+          if ( $LASTEXITCODE -ge 8 ) { throw "Copying the mod folder failed ($LASTEXITCODE)" }
+
+          New-Item -ItemType Directory -Force dist/symbols | Out-Null
+          Copy-Item game/mod_tf/bin/x64/*.pdb dist/symbols -ErrorAction SilentlyContinue
+
+          # Windows line endings for the batch file and the notes.
+          Get-Content '.github/package/Play Offline TF2.bat' | Set-Content "$out/Play Offline TF2.bat" -Encoding ascii
+          Get-Content '.github/package/HOW TO PLAY.txt' | Set-Content "$out/HOW TO PLAY.txt" -Encoding utf8
+          Copy-Item OFFLINE_INVENTORY.md $out
+
+          Compress-Archive -Path $out -DestinationPath dist/OfflineTF2-windows.zip
+          Get-ChildItem -Recurse $out | Measure-Object -Property Length -Sum |
+            ForEach-Object { "Packaged {0} files, {1:N1} MB" -f $_.Count, ( $_.Sum / 1MB ) }
+          $global:LASTEXITCODE = 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfflineTF2-windows
+          path: dist/OfflineTF2
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfflineTF2-windows-debug-symbols
+          path: dist/symbols
+          if-no-files-found: ignore
+
+      - name: Publish release
+        if: startsWith( github.ref, 'refs/tags/v' )
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/OfflineTF2-windows.zip
+          body_path: .github/package/HOW TO PLAY.txt

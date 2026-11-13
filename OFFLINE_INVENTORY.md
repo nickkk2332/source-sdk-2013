@@ -7,10 +7,31 @@ game's item list is available: every weapon, hat, taunt, paint and unusual effec
 None of this touches your real TF2 inventory, and it isn't compatible with real
 TF2 servers.
 
+## Getting a build
+
+GitHub builds the Windows version every time this branch changes, so you don't
+need Visual Studio:
+
+1. On the repository's page on GitHub, open the **Actions** tab and click the
+   latest **Windows build** run with a green check.
+2. Under **Artifacts**, download **OfflineTF2-windows** and unzip it anywhere.
+3. You need Steam running, Team Fortress 2 installed, and **Source SDK Base 2013
+   Multiplayer** installed (free, in your Steam Library under Tools).
+4. Double-click **Play Offline TF2.bat** in the unzipped folder.
+
+To update, unzip a newer build on top of the old folder and let it replace the
+files; your items (in `mod_tf\cfg`) are kept.
+
+To make a permanent download instead (a GitHub Release), push a tag whose name
+starts with `v`, e.g. `git tag v1` then `git push origin v1`. Run downloads on
+the Actions tab expire after 90 days; Releases don't.
+
+You can still build it yourself as described in the main README.
+
 ## Playing
 
-1. Build and launch the mod as described in the main README. Keep Steam running:
-   the mod loads TF2's models and item list through it.
+1. Start the mod (see above). Keep Steam running: the mod loads TF2's models and
+   item list through it.
 2. Open the console (enable it in Options > Advanced if needed).
 3. Give yourself some items (see below), then open your loadout from the main
    menu and equip them like normal.
